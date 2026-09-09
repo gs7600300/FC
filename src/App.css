@@ -1,0 +1,246 @@
+.page-shell {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 24px;
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0;
+}
+
+.panel {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 24px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.18);
+}
+
+.summary-panel {
+  padding: 28px;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
+
+.summary-panel h1 {
+  margin: 12px 0 24px;
+  font-size: 2.5rem;
+}
+
+.balance-box {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.22), rgba(59, 130, 246, 0.2));
+  border-radius: 18px;
+  padding: 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.balance-box span,
+.stats-grid span {
+  font-size: 0.8rem;
+  color: #bfdbfe;
+}
+
+.balance-box strong {
+  font-size: 2rem;
+  line-height: 1.2;
+  color: #f8fafc;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stats-grid div {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stats-grid strong {
+  font-size: 1.05rem;
+  color: #f8fafc;
+}
+
+.content-panel {
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.form-section,
+.list-section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.form-section h2,
+.list-section h2 {
+  margin: 0;
+}
+
+.transaction-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.transaction-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #dbeafe;
+  font-size: 0.92rem;
+}
+
+.transaction-form input,
+.transaction-form select,
+.transaction-form button {
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.9);
+  color: #f8fafc;
+  font: inherit;
+}
+
+.transaction-form input,
+.transaction-form select {
+  padding: 12px 14px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.transaction-form button {
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #38bdf8, #2563eb);
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.transaction-form button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.transaction-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.notice {
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.9rem;
+}
+
+.notice.warning {
+  background: rgba(250, 204, 21, 0.12);
+  border: 1px solid rgba(250, 204, 21, 0.35);
+  color: #fde68a;
+}
+
+.notice.error {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+}
+
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.empty-state {
+  color: #cbd5e1;
+  margin: 0;
+  padding: 10px 0;
+}
+
+.transaction-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.transaction-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-left: 4px solid #f87171;
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+
+.transaction-list li.income {
+  border-left-color: #4ade80;
+}
+
+.transaction-list li div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transaction-list strong {
+  color: #f8fafc;
+}
+
+.transaction-list small {
+  color: #cbd5e1;
+}
+
+.transaction-list span {
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.transaction-list li.income span {
+  color: #86efac;
+}
+
+.transaction-list li.expense span {
+  color: #fca5a5;
+}
+
+@media (max-width: 760px) {
+  .page-shell {
+    grid-template-columns: 1fr;
+    width: min(100% - 20px, 680px);
+    padding: 20px 0 32px;
+  }
+
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-panel,
+  .content-panel {
+    padding: 20px;
+  }
+}

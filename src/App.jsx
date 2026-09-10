@@ -632,49 +632,53 @@ function App() {
           </div>
         )}
 
-        <div className="balance-box">
-          <span>Баланс</span>
-          <strong>{total.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</strong>
-        </div>
+        {user && (
+          <>
+            <div className="balance-box">
+              <span>Баланс</span>
+              <strong>{total.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</strong>
+            </div>
 
-        <div className="stats-grid">
-          <div>
-            <span>Доход</span>
-            <strong>
-              {transactions
-                .filter((item) => item.type === 'income')
-                .reduce((sum, item) => sum + item.amount, 0)
-                .toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
-            </strong>
-          </div>
-          <div>
-            <span>Расход</span>
-            <strong>
-              {transactions
-                .filter((item) => item.type === 'expense')
-                .reduce((sum, item) => sum + item.amount, 0)
-                .toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
-            </strong>
-          </div>
-        </div>
+            <div className="stats-grid">
+              <div>
+                <span>Доход</span>
+                <strong>
+                  {transactions
+                    .filter((item) => item.type === 'income')
+                    .reduce((sum, item) => sum + item.amount, 0)
+                    .toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                </strong>
+              </div>
+              <div>
+                <span>Расход</span>
+                <strong>
+                  {transactions
+                    .filter((item) => item.type === 'expense')
+                    .reduce((sum, item) => sum + item.amount, 0)
+                    .toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                </strong>
+              </div>
+            </div>
 
-        {user && familyMembers.length > 0 && (
-          <div className="member-balance-box">
-            <h3>Остаток по членам семьи</h3>
-            <ul>
-              {familyMembers.map((member) => (
-                <li key={member.id}>
-                  <span>{member.name}</span>
-                  <strong>
-                    {(memberBalances.get(member.id) ?? 0).toLocaleString('ru-RU', {
-                      style: 'currency',
-                      currency: 'RUB',
-                    })}
-                  </strong>
-                </li>
-              ))}
-            </ul>
-          </div>
+            {familyMembers.length > 0 && (
+              <div className="member-balance-box">
+                <h3>Остаток по членам семьи</h3>
+                <ul>
+                  {familyMembers.map((member) => (
+                    <li key={member.id}>
+                      <span>{member.name}</span>
+                      <strong>
+                        {(memberBalances.get(member.id) ?? 0).toLocaleString('ru-RU', {
+                          style: 'currency',
+                          currency: 'RUB',
+                        })}
+                      </strong>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
         )}
 
         {user && (

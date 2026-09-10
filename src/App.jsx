@@ -5,8 +5,12 @@ import {
   addFamilyMember,
   deleteCategory,
   deleteFamilyMember,
+  deleteTransaction,
   ensureDefaultCategories,
+  ensureFamilyContext,
   firebaseReady,
+  joinFamily,
+  linkUserToFamilyMember,
   saveTransaction,
   signIn,
   signOutUser,
@@ -17,6 +21,7 @@ import {
   subscribeToTransactions,
   updateCategory,
   updateFamilyMember,
+  updateTransaction,
 } from './firebase'
 
 const initialForm = {
@@ -86,6 +91,11 @@ function App() {
   const [activeTab, setActiveTab] = useState('overview')
   const [theme, setTheme] = useState(getPreferredTheme)
   const [reportForm, setReportForm] = useState(initialReportForm)
+  const [transactionEditingId, setTransactionEditingId] = useState('')
+  const [familyContext, setFamilyContext] = useState(null)
+  const [joinCode, setJoinCode] = useState('')
+  const [familyMessage, setFamilyMessage] = useState('')
+  const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState('')
 
   useEffect(() => {
     document.body.dataset.theme = theme
@@ -104,6 +114,7 @@ function App() {
         setTransactions([])
         setFamilyMembers([])
         setCategories([])
+        setFamilyContext(null)
         setLoading(false)
         return
       }
@@ -113,10 +124,12 @@ function App() {
       unsubscribeFamilyMembers?.()
       unsubscribeCategories?.()
 
-      await ensureDefaultCategories(currentUser.uid)
+      const context = await ensureFamilyContext(currentUser)
+      setFamilyContext(context)
+      await ensureDefaultCategories(context.familyId)
 
       unsubscribeFamilyMembers = subscribeToFamilyMembers(
-        currentUser.uid,
+        context.familyId,
         (members) => {
           setFamilyMembers(members)
         },
@@ -126,7 +139,7 @@ function App() {
       )
 
       unsubscribeCategories = subscribeToCategories(
-        currentUser.uid,
+        context.familyId,
         (items) => {
           setCategories(items)
         },
@@ -136,7 +149,7 @@ function App() {
       )
 
       unsubscribeTransactions = subscribeToTransactions(
-        currentUser.uid,
+        context.familyId,
         (items) => {
           setTransactions(items)
           setLoading(false)
@@ -154,7 +167,7 @@ function App() {
       unsubscribeFamilyMembers?.()
       unsubscribeCategories?.()
     }
-  }, [])
+    }, [])
 
   const total = useMemo(
     () =>
@@ -314,12 +327,53 @@ function App() {
     setError('')
 
     try {
-      await saveTransaction({ ...form, type: 'expense' }, user.uid)
+      const transaction = { ...form, type: 'expense' }
+      if (transactionEditingId) {
+        await updateTransaction(transactionEditingId, transaction, familyContext.familyId)
+      } else {
+        await saveTransaction(transaction, familyContext.familyId, user.uid)
+      }
       setForm(initialForm)
+      setTransactionEditingId('')
     } catch (submitError) {
       setError(submitError.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleEditTransaction = (transaction) => {
+      const commonFields = {
+        description: transaction.description,
+        amount: String(transaction.amount),
+        familyMemberId: transaction.familyMemberId || '',
+        date: transaction.date,
+      }
+
+      if (transaction.type === 'expense') {
+        setForm({ ...commonFields, category: transaction.category })
+        setActiveTab('overview')
+      } else if (transaction.type === 'income') {
+        setIncomeForm(commonFields)
+        setActiveTab('income')
+      } else {
+        setTransferForm({ ...commonFields, transferToMemberId: transaction.transferToMemberId || '' })
+        setActiveTab('income')
+      }
+
+      setTransactionEditingId(transaction.id)
+      setError('')
+    }
+
+  const handleDeleteTransaction = async (transactionId) => {
+      if (!window.confirm('Удалить эту операцию?')) {
+        return
+      }
+
+      try {
+        await deleteTransaction(transactionId, familyContext.familyId)
+      } catch (submitError) {
+        setError(submitError.message)
     }
   }
 
@@ -335,8 +389,14 @@ function App() {
       setError('')
 
       try {
-        await saveTransaction({ ...incomeForm, type: 'income', category: 'Salary' }, user.uid)
+        const transaction = { ...incomeForm, type: 'income', category: 'Salary' }
+        if (transactionEditingId) {
+          await updateTransaction(transactionEditingId, transaction, familyContext.familyId)
+        } else {
+          await saveTransaction(transaction, familyContext.familyId, user.uid)
+        }
         setIncomeForm(initialIncomeForm)
+        setTransactionEditingId('')
       } catch (submitError) {
         setError(submitError.message)
       } finally {
@@ -375,8 +435,14 @@ function App() {
       setError('')
 
       try {
-        await saveTransaction({ ...transferForm, type: 'transfer', category: 'Transfer' }, user.uid)
+        const transaction = { ...transferForm, type: 'transfer', category: 'Transfer' }
+        if (transactionEditingId) {
+          await updateTransaction(transactionEditingId, transaction, familyContext.familyId)
+        } else {
+          await saveTransaction(transaction, familyContext.familyId, user.uid)
+        }
         setTransferForm(initialTransferForm)
+        setTransactionEditingId('')
       } catch (submitError) {
         setError(submitError.message)
       } finally {
@@ -392,6 +458,28 @@ function App() {
     }
   }
 
+  const handleJoinFamily = async (event) => {
+      event.preventDefault()
+      try {
+        const joinedFamily = await joinFamily(user.uid, joinCode)
+        setFamilyMessage(`Вы присоединились к семье «${joinedFamily.familyName}». Перезагрузите страницу.`)
+        setJoinCode('')
+      } catch (submitError) {
+        setFamilyMessage(submitError.message)
+      }
+    }
+
+  const handleLinkFamilyMember = async (event) => {
+      event.preventDefault()
+      try {
+        await linkUserToFamilyMember(selectedFamilyMemberId, user.uid)
+        setFamilyContext((current) => ({ ...current, familyMemberId: selectedFamilyMemberId }))
+        setFamilyMessage('Пользователь связан с записью члена семьи.')
+      } catch (submitError) {
+        setFamilyMessage(submitError.message)
+    }
+  }
+
   const handleAddMember = async (event) => {
     event.preventDefault()
 
@@ -401,9 +489,9 @@ function App() {
 
     try {
       if (memberEditingId) {
-        await updateFamilyMember(memberEditingId, user.uid, memberForm)
+        await updateFamilyMember(memberEditingId, familyContext.familyId, memberForm)
       } else {
-        await addFamilyMember(user.uid, memberForm)
+        await addFamilyMember(familyContext.familyId, memberForm)
       }
       setMemberForm('')
       setMemberEditingId('')
@@ -434,9 +522,9 @@ function App() {
 
     try {
       if (categoryEditingId) {
-        await updateCategory(categoryEditingId, user.uid, categoryForm)
+        await updateCategory(categoryEditingId, familyContext.familyId, categoryForm)
       } else {
-        await addCategory(user.uid, categoryForm)
+        await addCategory(familyContext.familyId, categoryForm)
       }
       setCategoryForm('')
       setCategoryEditingId('')
@@ -607,6 +695,13 @@ function App() {
             </button>
             <button
               type="button"
+              className={activeTab === 'operations' ? 'menu-button active' : 'menu-button'}
+              onClick={() => setActiveTab('operations')}
+            >
+              Управление операциями
+            </button>
+            <button
+              type="button"
               className={activeTab === 'members' ? 'menu-button active' : 'menu-button'}
               onClick={() => setActiveTab('members')}
             >
@@ -641,7 +736,7 @@ function App() {
         {user && activeTab === 'overview' && (
           <>
             <section className="form-section">
-              <h2>Добавить операцию</h2>
+              <h2>{transactionEditingId ? 'Изменить расход' : 'Добавить расход'}</h2>
 
               {error && <div className="notice error">{error}</div>}
 
@@ -704,11 +799,63 @@ function App() {
                 </div>
 
                 <button type="submit" disabled={saving || !firebaseReady}>
-                  {saving ? 'Сохранение...' : 'Сохранить'}
+                  {saving ? 'Сохранение...' : transactionEditingId ? 'Сохранить изменения' : 'Добавить расход'}
                 </button>
+                {transactionEditingId && (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      setForm(initialForm)
+                      setTransactionEditingId('')
+                    }}
+                  >
+                    Отмена
+                  </button>
+                )}
               </form>
             </section>
           </>
+        )}
+
+        {user && activeTab === 'operations' && (
+          <section className="reference-block">
+            <div className="reference-header">
+              <h2>Управление операциями</h2>
+              <p className="field-hint">Изменение и удаление расходов, доходов и передач.</p>
+            </div>
+
+            {error && <div className="notice error">{error}</div>}
+
+            {transactions.length === 0 ? (
+              <p className="empty-state">Пока нет операций.</p>
+            ) : (
+              <ul className="transaction-list">
+                {transactions.map((transaction) => (
+                  <li key={transaction.id} className={transaction.type}>
+                    <div>
+                      <strong>{transaction.description}</strong>
+                      <small>
+                        {transaction.category} • {getTransactionMembers(transaction)} • {transaction.date}
+                      </small>
+                    </div>
+                    <div className="reference-actions">
+                      <span>
+                        {getTransactionSign(transaction)}
+                        {transaction.amount.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                      </span>
+                      <button type="button" onClick={() => handleEditTransaction(transaction)}>
+                        Изменить
+                      </button>
+                      <button type="button" className="danger" onClick={() => handleDeleteTransaction(transaction.id)}>
+                        Удалить
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
 
         {user && activeTab === 'income' && (
@@ -743,7 +890,7 @@ function App() {
                   Дата
                   <input name="date" type="date" value={incomeForm.date} onChange={handleIncomeChange} />
                 </label>
-                <button type="submit" disabled={saving || !firebaseReady}>{saving ? 'Сохранение...' : 'Добавить доход'}</button>
+                <button type="submit" disabled={saving || !firebaseReady}>                {saving ? 'Сохранение...' : transactionEditingId ? 'Сохранить доход' : 'Добавить доход'}</button>
               </form>
             </div>
 
@@ -789,7 +936,7 @@ function App() {
                     <input name="date" type="date" value={transferForm.date} onChange={handleTransferChange} />
                   </label>
                 </div>
-                <button type="submit" disabled={saving || !firebaseReady}>{saving ? 'Сохранение...' : 'Добавить передачу'}</button>
+                <button type="submit" disabled={saving || !firebaseReady}>{saving ? 'Сохранение...' : transactionEditingId ? 'Сохранить передачу' : 'Добавить передачу'}</button>
               </form>
             </div>
           </section>
@@ -909,6 +1056,43 @@ function App() {
                   Светлая
                 </button>
               </div>
+            </div>
+
+            <div className="settings-group">
+              <h3>{familyContext?.familyName || 'Семья'}</h3>
+              <p className="field-hint">
+                Код приглашения: <strong>{familyContext?.inviteCode || '—'}</strong>
+              </p>
+              <p className="field-hint">
+                Передайте этот код взрослому пользователю, чтобы объединить аккаунты в одну семью.
+              </p>
+              <form className="reference-form" onSubmit={handleJoinFamily}>
+                <input
+                  value={joinCode}
+                  onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                  placeholder="Код другой семьи"
+                  maxLength="6"
+                />
+                <button type="submit">Присоединиться</button>
+              </form>
+              <form className="reference-form" onSubmit={handleLinkFamilyMember}>
+                <label>
+                  Моя запись в семье
+                  <select
+                    value={selectedFamilyMemberId || familyContext?.familyMemberId || ''}
+                    onChange={(event) => setSelectedFamilyMemberId(event.target.value)}
+                  >
+                    <option value="">Выберите запись</option>
+                    {familyMembers.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button type="submit">Связать с пользователем</button>
+              </form>
+              {familyMessage && <div className="notice">{familyMessage}</div>}
             </div>
           </section>
         )}

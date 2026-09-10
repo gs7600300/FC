@@ -22,9 +22,23 @@ import {
 const initialForm = {
   description: '',
   amount: '',
-  type: 'expense',
   category: 'Food',
   familyMemberId: '',
+  date: new Date().toISOString().slice(0, 10),
+}
+
+const initialIncomeForm = {
+  description: 'Зарплата',
+  amount: '',
+  familyMemberId: '',
+  date: new Date().toISOString().slice(0, 10),
+}
+
+const initialTransferForm = {
+  description: 'Передача остатка',
+  amount: '',
+  familyMemberId: '',
+  transferToMemberId: '',
   date: new Date().toISOString().slice(0, 10),
 }
 
@@ -52,6 +66,8 @@ const getPreferredTheme = () => {
 
 function App() {
   const [form, setForm] = useState(initialForm)
+  const [incomeForm, setIncomeForm] = useState(initialIncomeForm)
+  const [transferForm, setTransferForm] = useState(initialTransferForm)
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -99,18 +115,37 @@ function App() {
 
       await ensureDefaultCategories(currentUser.uid)
 
-      unsubscribeFamilyMembers = subscribeToFamilyMembers(currentUser.uid, (members) => {
-        setFamilyMembers(members)
-      })
+      unsubscribeFamilyMembers = subscribeToFamilyMembers(
+        currentUser.uid,
+        (members) => {
+          setFamilyMembers(members)
+        },
+        (subscriptionError) => {
+          setError(`Не удалось обновить членов семьи: ${subscriptionError.message}`)
+        },
+      )
 
-      unsubscribeCategories = subscribeToCategories(currentUser.uid, (items) => {
-        setCategories(items)
-      })
+      unsubscribeCategories = subscribeToCategories(
+        currentUser.uid,
+        (items) => {
+          setCategories(items)
+        },
+        (subscriptionError) => {
+          setError(`Не удалось обновить категории: ${subscriptionError.message}`)
+        },
+      )
 
-      unsubscribeTransactions = subscribeToTransactions(currentUser.uid, (items) => {
-        setTransactions(items)
-        setLoading(false)
-      })
+      unsubscribeTransactions = subscribeToTransactions(
+        currentUser.uid,
+        (items) => {
+          setTransactions(items)
+          setLoading(false)
+        },
+        (subscriptionError) => {
+          setError(`Не удалось обновить операции: ${subscriptionError.message}`)
+          setLoading(false)
+        },
+      )
     })
 
     return () => {
@@ -124,6 +159,10 @@ function App() {
   const total = useMemo(
     () =>
       transactions.reduce((sum, item) => {
+        if (item.type === 'transfer') {
+          return sum
+        }
+
         return item.type === 'income' ? sum + item.amount : sum - item.amount
       }, 0),
     [transactions],
@@ -137,13 +176,20 @@ function App() {
     }
 
     for (const item of transactions) {
-      const memberId = item.familyMemberId
-      if (!memberId) {
+      if (item.type === 'transfer') {
+        if (item.familyMemberId) {
+          balances.set(item.familyMemberId, (balances.get(item.familyMemberId) ?? 0) - item.amount)
+        }
+        if (item.transferToMemberId) {
+          balances.set(item.transferToMemberId, (balances.get(item.transferToMemberId) ?? 0) + item.amount)
+        }
         continue
       }
 
-      const current = balances.get(memberId) ?? 0
-      balances.set(memberId, item.type === 'income' ? current + item.amount : current - item.amount)
+      if (item.familyMemberId) {
+        const current = balances.get(item.familyMemberId) ?? 0
+        balances.set(item.familyMemberId, item.type === 'income' ? current + item.amount : current - item.amount)
+      }
     }
 
     return balances
@@ -209,6 +255,16 @@ function App() {
     setAuthForm((current) => ({ ...current, [name]: value }))
   }
 
+  const handleIncomeChange = (event) => {
+    const { name, value } = event.target
+    setIncomeForm((current) => ({ ...current, [name]: value }))
+  }
+
+  const handleTransferChange = (event) => {
+    const { name, value } = event.target
+    setTransferForm((current) => ({ ...current, [name]: value }))
+  }
+
   const handleReportChange = (event) => {
     const { name, value } = event.target
     setReportForm((current) => ({ ...current, [name]: value }))
@@ -258,12 +314,61 @@ function App() {
     setError('')
 
     try {
-      await saveTransaction(form, user.uid)
+      await saveTransaction({ ...form, type: 'expense' }, user.uid)
       setForm(initialForm)
     } catch (submitError) {
       setError(submitError.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleIncomeSubmit = async (event) => {
+      event.preventDefault()
+
+      if (!incomeForm.description.trim() || !Number(incomeForm.amount) || Number(incomeForm.amount) <= 0) {
+        setError('Введите корректное описание и сумму дохода больше нуля.')
+        return
+      }
+
+      setSaving(true)
+      setError('')
+
+      try {
+        await saveTransaction({ ...incomeForm, type: 'income', category: 'Salary' }, user.uid)
+        setIncomeForm(initialIncomeForm)
+      } catch (submitError) {
+        setError(submitError.message)
+      } finally {
+        setSaving(false)
+      }
+    }
+
+  const handleTransferSubmit = async (event) => {
+      event.preventDefault()
+
+      if (
+        !transferForm.description.trim() ||
+        !Number(transferForm.amount) ||
+        Number(transferForm.amount) <= 0 ||
+        !transferForm.familyMemberId ||
+        !transferForm.transferToMemberId ||
+        transferForm.familyMemberId === transferForm.transferToMemberId
+      ) {
+        setError('Выберите разных отправителя и получателя и укажите сумму больше нуля.')
+        return
+      }
+
+      setSaving(true)
+      setError('')
+
+      try {
+        await saveTransaction({ ...transferForm, type: 'transfer', category: 'Transfer' }, user.uid)
+        setTransferForm(initialTransferForm)
+      } catch (submitError) {
+        setError(submitError.message)
+      } finally {
+        setSaving(false)
     }
   }
 
@@ -339,6 +444,25 @@ function App() {
     } catch (submitError) {
       setError(submitError.message)
     }
+  }
+
+  const getTransactionMembers = (transaction) => {
+    const from = familyMembers.find((member) => member.id === transaction.familyMemberId)
+    const to = familyMembers.find((member) => member.id === transaction.transferToMemberId)
+
+    if (transaction.type === 'transfer') {
+      return `${from?.name ?? 'Не указан'} → ${to?.name ?? 'Не указан'}`
+    }
+
+    return from?.name ?? 'Общий'
+  }
+
+  const getTransactionSign = (transaction) => {
+    if (transaction.type === 'transfer') {
+      return '↔'
+    }
+
+    return transaction.type === 'income' ? '+' : '-'
   }
 
   return (
@@ -464,6 +588,13 @@ function App() {
             </button>
             <button
               type="button"
+              className={activeTab === 'income' ? 'menu-button active' : 'menu-button'}
+              onClick={() => setActiveTab('income')}
+            >
+              Доходы и переводы
+            </button>
+            <button
+              type="button"
               className={activeTab === 'members' ? 'menu-button active' : 'menu-button'}
               onClick={() => setActiveTab('members')}
             >
@@ -528,10 +659,14 @@ function App() {
                   </label>
 
                   <label>
-                    Тип
-                    <select name="type" value={form.type} onChange={handleChange}>
-                      <option value="expense">Расход</option>
-                      <option value="income">Доход</option>
+                    Член семьи
+                    <select name="familyMemberId" value={form.familyMemberId} onChange={handleChange}>
+                      <option value="">Общий расход</option>
+                      {familyMembers.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.name}
+                        </option>
+                      ))}
                     </select>
                   </label>
                 </div>
@@ -543,18 +678,6 @@ function App() {
                       {categories.map((category) => (
                         <option key={category.id} value={category.name}>
                           {category.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Член семьи
-                    <select name="familyMemberId" value={form.familyMemberId} onChange={handleChange}>
-                      <option value="">Общий расход</option>
-                      {familyMembers.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          {member.name}
                         </option>
                       ))}
                     </select>
@@ -574,6 +697,81 @@ function App() {
               </form>
             </section>
           </>
+        )}
+
+        {user && activeTab === 'income' && (
+          <section className="reference-block">
+            <div className="reference-header">
+              <h2>Доходы и переводы</h2>
+            </div>
+
+            {error && <div className="notice error">{error}</div>}
+
+            <div className="settings-group">
+              <h3>Зарплата или другой доход</h3>
+              <form onSubmit={handleIncomeSubmit} className="transaction-form">
+                <label>
+                  Описание
+                  <input name="description" value={incomeForm.description} onChange={handleIncomeChange} />
+                </label>
+                <div className="field-row">
+                  <label>
+                    Сумма
+                    <input name="amount" type="number" min="0.01" step="0.01" value={incomeForm.amount} onChange={handleIncomeChange} />
+                  </label>
+                  <label>
+                    Получатель
+                    <select name="familyMemberId" value={incomeForm.familyMemberId} onChange={handleIncomeChange}>
+                      <option value="">Общий доход</option>
+                      {familyMembers.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  Дата
+                  <input name="date" type="date" value={incomeForm.date} onChange={handleIncomeChange} />
+                </label>
+                <button type="submit" disabled={saving || !firebaseReady}>{saving ? 'Сохранение...' : 'Добавить доход'}</button>
+              </form>
+            </div>
+
+            <div className="settings-group">
+              <h3>Передача остатка между членами семьи</h3>
+              <form onSubmit={handleTransferSubmit} className="transaction-form">
+                <label>
+                  Описание
+                  <input name="description" value={transferForm.description} onChange={handleTransferChange} />
+                </label>
+                <div className="field-row">
+                  <label>
+                    От кого
+                    <select name="familyMemberId" value={transferForm.familyMemberId} onChange={handleTransferChange}>
+                      <option value="">Выберите отправителя</option>
+                      {familyMembers.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Кому
+                    <select name="transferToMemberId" value={transferForm.transferToMemberId} onChange={handleTransferChange}>
+                      <option value="">Выберите получателя</option>
+                      {familyMembers.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <div className="field-row">
+                  <label>
+                    Сумма
+                    <input name="amount" type="number" min="0.01" step="0.01" value={transferForm.amount} onChange={handleTransferChange} />
+                  </label>
+                  <label>
+                    Дата
+                    <input name="date" type="date" value={transferForm.date} onChange={handleTransferChange} />
+                  </label>
+                </div>
+                <button type="submit" disabled={saving || !firebaseReady}>{saving ? 'Сохранение...' : 'Добавить передачу'}</button>
+              </form>
+            </div>
+          </section>
         )}
 
         {user && activeTab === 'members' && (
@@ -720,6 +918,7 @@ function App() {
                     <option value="all">Все</option>
                     <option value="income">Доход</option>
                     <option value="expense">Расход</option>
+                    <option value="transfer">Передача</option>
                   </select>
                 </label>
 
@@ -771,18 +970,16 @@ function App() {
             ) : (
               <ul className="transaction-list">
                 {reportTransactions.map((transaction) => {
-                  const member = familyMembers.find((item) => item.id === transaction.familyMemberId)
-
                   return (
-                    <li key={transaction.id} className={transaction.type === 'income' ? 'income' : 'expense'}>
+                    <li key={transaction.id} className={transaction.type}>
                       <div>
                         <strong>{transaction.description}</strong>
                         <small>
-                          {transaction.category} • {member ? member.name : 'Общий'} • {transaction.date}
+                          {transaction.category} • {getTransactionMembers(transaction)} • {transaction.date}
                         </small>
                       </div>
                       <span>
-                        {transaction.type === 'income' ? '+' : '-'}
+                        {getTransactionSign(transaction)}
                         {transaction.amount.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
                       </span>
                     </li>
@@ -806,18 +1003,16 @@ function App() {
             ) : (
               <ul className="transaction-list">
                 {transactions.map((transaction) => {
-                  const member = familyMembers.find((item) => item.id === transaction.familyMemberId)
-
                   return (
-                    <li key={transaction.id} className={transaction.type === 'income' ? 'income' : 'expense'}>
+                    <li key={transaction.id} className={transaction.type}>
                       <div>
                         <strong>{transaction.description}</strong>
                         <small>
-                          {transaction.category} • {member ? member.name : 'Общий'} • {transaction.date}
+                          {transaction.category} • {getTransactionMembers(transaction)} • {transaction.date}
                         </small>
                       </div>
                       <span>
-                        {transaction.type === 'income' ? '+' : '-'}
+                        {getTransactionSign(transaction)}
                         {transaction.amount.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
                       </span>
                     </li>

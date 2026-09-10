@@ -147,7 +147,7 @@ export async function deleteCategory(id) {
   await deleteDoc(doc(db, 'categories', id))
 }
 
-export function subscribeToCategories(uid, onUpdate) {
+export function subscribeToCategories(uid, onUpdate, onError) {
   if (!db || !uid) {
     onUpdate([])
     return () => {}
@@ -155,14 +155,22 @@ export function subscribeToCategories(uid, onUpdate) {
 
   const categoriesRef = query(collection(db, 'categories'), where('uid', '==', uid), orderBy('name', 'asc'))
 
-  return onSnapshot(categoriesRef, (snapshot) => {
-    const categories = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      name: doc.data().name || 'Без названия',
-    }))
+  return onSnapshot(
+    categoriesRef,
+    (snapshot) => {
+      const categories = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        name: doc.data().name || 'Без названия',
+      }))
 
-    onUpdate(categories)
-  })
+      onUpdate(categories)
+    },
+    (error) => {
+      console.error('Не удалось загрузить категории.', error)
+      onError?.(error)
+      onUpdate([])
+    },
+  )
 }
 
 export async function addFamilyMember(uid, name) {
@@ -206,7 +214,7 @@ export async function deleteFamilyMember(id) {
   await deleteDoc(doc(db, 'familyMembers', id))
 }
 
-export function subscribeToFamilyMembers(uid, onUpdate) {
+export function subscribeToFamilyMembers(uid, onUpdate, onError) {
   if (!db || !uid) {
     onUpdate([])
     return () => {}
@@ -214,14 +222,22 @@ export function subscribeToFamilyMembers(uid, onUpdate) {
 
   const membersRef = query(collection(db, 'familyMembers'), where('uid', '==', uid), orderBy('name', 'asc'))
 
-  return onSnapshot(membersRef, (snapshot) => {
-    const members = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      name: doc.data().name || 'Без имени',
-    }))
+  return onSnapshot(
+    membersRef,
+    (snapshot) => {
+      const members = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        name: doc.data().name || 'Без имени',
+      }))
 
-    onUpdate(members)
-  })
+      onUpdate(members)
+    },
+    (error) => {
+      console.error('Не удалось загрузить членов семьи.', error)
+      onError?.(error)
+      onUpdate([])
+    },
+  )
 }
 
 export async function saveTransaction(transaction, uid) {
@@ -240,12 +256,13 @@ export async function saveTransaction(transaction, uid) {
     type: transaction.type,
     category: transaction.category,
     familyMemberId: transaction.familyMemberId || null,
+    transferToMemberId: transaction.transferToMemberId || null,
     date: transaction.date ? new Date(transaction.date) : new Date(),
     createdAt: serverTimestamp(),
   })
 }
 
-export function subscribeToTransactions(uid, onUpdate) {
+export function subscribeToTransactions(uid, onUpdate, onError) {
   if (!db || !uid) {
     onUpdate([])
     return () => {}
@@ -270,13 +287,16 @@ export function subscribeToTransactions(uid, onUpdate) {
           type: data.type || 'expense',
           category: data.category || 'Other',
           familyMemberId: data.familyMemberId || null,
+          transferToMemberId: data.transferToMemberId || null,
           date: normalizeDate(data.date),
         }
       })
 
       onUpdate(transactions)
     },
-    () => {
+    (error) => {
+      console.error('Не удалось загрузить операции.', error)
+      onError?.(error)
       onUpdate([])
     },
   )

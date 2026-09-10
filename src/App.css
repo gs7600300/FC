@@ -429,6 +429,10 @@ select {
   border-left-color: #4ade80;
 }
 
+.transaction-list li.transfer {
+  border-left-color: #facc15;
+}
+
 .transaction-list li div {
   display: flex;
   flex-direction: column;
@@ -454,6 +458,10 @@ select {
 
 .transaction-list li.expense span {
   color: var(--danger);
+}
+
+.transaction-list li.transfer span {
+  color: var(--warning);
 }
 
 @media (max-width: 760px) {

@@ -347,6 +347,8 @@ function App() {
   const handleTransferSubmit = async (event) => {
       event.preventDefault()
 
+      const senderBalance = memberBalances.get(transferForm.familyMemberId) ?? 0
+
       if (
         !transferForm.description.trim() ||
         !Number(transferForm.amount) ||
@@ -356,6 +358,16 @@ function App() {
         transferForm.familyMemberId === transferForm.transferToMemberId
       ) {
         setError('Выберите разных отправителя и получателя и укажите сумму больше нуля.')
+        return
+      }
+
+      if (Number(transferForm.amount) > senderBalance) {
+        setError(
+          `Сумма передачи не может превышать остаток отправителя: ${senderBalance.toLocaleString('ru-RU', {
+            style: 'currency',
+            currency: 'RUB',
+          })}.`,
+        )
         return
       }
 
@@ -749,6 +761,15 @@ function App() {
                       <option value="">Выберите отправителя</option>
                       {familyMembers.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
                     </select>
+                    {transferForm.familyMemberId && (
+                      <small className="field-hint">
+                        Доступно:{' '}
+                        {(memberBalances.get(transferForm.familyMemberId) ?? 0).toLocaleString('ru-RU', {
+                          style: 'currency',
+                          currency: 'RUB',
+                        })}
+                      </small>
+                    )}
                   </label>
                   <label>
                     Кому

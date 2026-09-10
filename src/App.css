@@ -198,6 +198,11 @@ select {
   font-size: 0.92rem;
 }
 
+.field-hint {
+  color: var(--muted-soft);
+  font-size: 0.8rem;
+}
+
 .auth-form input,
 .transaction-form input,
 .transaction-form select,

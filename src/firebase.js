@@ -40,7 +40,20 @@ export const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
 export const db = app ? getFirestore(app) : null
 export const auth = app ? getAuth(app) : null
 
-export const defaultCategories = ['Food', 'Transport', 'Housing', 'Salary', 'Health', 'Shopping', 'Other']
+export const defaultCategories = [
+  'Продукты',
+  'Транспорт',
+  'Жильё',
+  'Коммунальные услуги',
+  'Здоровье',
+  'Развлечения',
+  'Покупки',
+  'Дети',
+  'Зарплата',
+  'Другое',
+]
+
+export const standardCategoryNames = [...defaultCategories]
 
 function createInviteCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase()
@@ -384,6 +397,122 @@ export async function deleteTransaction(id, familyId) {
   await deleteDoc(doc(db, 'transactions', id))
 }
 
+export async function addPlannedPurchase(familyId, purchase) {
+  if (!db || !familyId) {
+    throw new Error('Для добавления плана покупки нужно войти в аккаунт.')
+  }
+
+  const title = purchase.title.trim()
+  const amount = Number(purchase.amount)
+
+  if (!title) {
+    throw new Error('Название плана не может быть пустым.')
+  }
+
+  if (!amount || amount <= 0) {
+    throw new Error('Сумма плана должна быть больше нуля.')
+  }
+
+  await addDoc(collection(db, 'plannedPurchases'), {
+    familyId,
+    title,
+    amount,
+    category: purchase.category || 'Other',
+    plannedDate: purchase.plannedDate ? new Date(purchase.plannedDate) : new Date(),
+    notes: purchase.notes?.trim() || '',
+    createdAt: serverTimestamp(),
+  })
+}
+
+export async function addBudget(familyId, budget) {
+  if (!db || !familyId) {
+    throw new Error('Для установки лимита нужно войти в аккаунт.')
+  }
+
+  const amount = Number(budget.amount)
+
+  if (!budget.category || !budget.month) {
+    throw new Error('Выберите категорию и месяц.')
+  }
+
+  if (!amount || amount <= 0) {
+    throw new Error('Лимит должен быть больше нуля.')
+  }
+
+  await addDoc(collection(db, 'budgets'), {
+    familyId,
+    category: budget.category,
+    month: budget.month,
+    amount,
+    createdAt: serverTimestamp(),
+  })
+}
+
+export async function updateBudget(id, familyId, budget) {
+  if (!db || !familyId) {
+    throw new Error('Для изменения лимита нужно войти в аккаунт.')
+  }
+
+  const amount = Number(budget.amount)
+
+  if (!budget.category || !budget.month) {
+    throw new Error('Выберите категорию и месяц.')
+  }
+
+  if (!amount || amount <= 0) {
+    throw new Error('Лимит должен быть больше нуля.')
+  }
+
+  await updateDoc(doc(db, 'budgets', id), {
+    category: budget.category,
+    month: budget.month,
+    amount,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function deleteBudget(id) {
+  if (!db) {
+    throw new Error('Firebase is not configured. Add your .env values first.')
+  }
+
+  await deleteDoc(doc(db, 'budgets', id))
+}
+
+export async function updatePlannedPurchase(id, familyId, purchase) {
+  if (!db || !familyId) {
+    throw new Error('Для изменения плана покупки нужно войти в аккаунт.')
+  }
+
+  const title = purchase.title.trim()
+  const amount = Number(purchase.amount)
+
+  if (!title) {
+    throw new Error('Название плана не может быть пустым.')
+  }
+
+  if (!amount || amount <= 0) {
+    throw new Error('Сумма плана должна быть больше нуля.')
+  }
+
+  await updateDoc(doc(db, 'plannedPurchases', id), {
+    title,
+    amount,
+    category: purchase.category || 'Other',
+    plannedDate: purchase.plannedDate ? new Date(purchase.plannedDate) : new Date(),
+    notes: purchase.notes?.trim() || '',
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function deletePlannedPurchase(id) {
+  if (!db) {
+    throw new Error('Firebase is not configured. Add your .env values first.')
+  }
+
+  await deleteDoc(doc(db, 'plannedPurchases', id))
+}
+
 export function subscribeToTransactions(familyId, onUpdate, onError) {
   if (!db || !familyId) {
     onUpdate([])
@@ -418,6 +547,70 @@ export function subscribeToTransactions(familyId, onUpdate, onError) {
     },
     (error) => {
       console.error('Не удалось загрузить операции.', error)
+      onError?.(error)
+      onUpdate([])
+    },
+  )
+}
+
+export function subscribeToPlannedPurchases(familyId, onUpdate, onError) {
+  if (!db || !familyId) {
+    onUpdate([])
+    return () => {}
+  }
+
+  const purchasesRef = query(collection(db, 'plannedPurchases'), where('familyId', '==', familyId))
+
+  return onSnapshot(
+    purchasesRef,
+    (snapshot) => {
+      const purchases = snapshot.docs
+        .map((doc) => {
+          const data = doc.data()
+
+          return {
+            id: doc.id,
+            title: data.title || 'Покупка',
+            amount: Number(data.amount) || 0,
+            category: data.category || 'Other',
+            plannedDate: normalizeDate(data.plannedDate),
+            notes: data.notes || '',
+          }
+        })
+        .sort((left, right) => new Date(left.plannedDate) - new Date(right.plannedDate))
+
+      onUpdate(purchases)
+    },
+    (error) => {
+      console.error('Не удалось загрузить планы покупок.', error)
+      onError?.(error)
+      onUpdate([])
+    },
+  )
+}
+
+export function subscribeToBudgets(familyId, onUpdate, onError) {
+  if (!db || !familyId) {
+    onUpdate([])
+    return () => {}
+  }
+
+  const budgetsRef = query(collection(db, 'budgets'), where('familyId', '==', familyId))
+
+  return onSnapshot(
+    budgetsRef,
+    (snapshot) => {
+      const items = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        category: doc.data().category || 'Other',
+        month: doc.data().month || new Date().toISOString().slice(0, 7),
+        amount: Number(doc.data().amount) || 0,
+      }))
+
+      onUpdate(items)
+    },
+    (error) => {
+      console.error('Не удалось загрузить лимиты бюджета.', error)
       onError?.(error)
       onUpdate([])
     },

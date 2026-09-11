@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
+  addBudget,
   addCategory,
   addFamilyMember,
+  addPlannedPurchase,
+  defaultCategories,
+  deleteBudget,
   deleteCategory,
   deleteFamilyMember,
+  deletePlannedPurchase,
   deleteTransaction,
   ensureDefaultCategories,
   ensureFamilyContext,
@@ -16,18 +21,22 @@ import {
   signOutUser,
   signUp,
   subscribeToAuth,
+  subscribeToBudgets,
   subscribeToCategories,
   subscribeToFamilyMembers,
+  subscribeToPlannedPurchases,
   subscribeToTransactions,
+  updateBudget,
   updateCategory,
   updateFamilyMember,
+  updatePlannedPurchase,
   updateTransaction,
 } from './firebase'
 
 const initialForm = {
   description: '',
   amount: '',
-  category: 'Food',
+  category: defaultCategories[0],
   familyMemberId: '',
   date: new Date().toISOString().slice(0, 10),
 }
@@ -52,13 +61,105 @@ const initialAuthForm = {
   password: '',
 }
 
+const getDateISO = (date) => date.toISOString().slice(0, 10)
+
+const getLastWeekRange = () => {
+  const endDate = new Date()
+  const startDate = new Date(endDate)
+  startDate.setDate(endDate.getDate() - 6)
+
+  return {
+    startDate: getDateISO(startDate),
+    endDate: getDateISO(endDate),
+  }
+}
+
+const getNextWeekRange = () => {
+  const startDate = new Date()
+  startDate.setDate(startDate.getDate() + 1)
+  const endDate = new Date(startDate)
+  endDate.setDate(startDate.getDate() + 6)
+
+  return {
+    startDate: getDateISO(startDate),
+    endDate: getDateISO(endDate),
+  }
+}
+
+const getLastDaysRange = (days) => {
+  const endDate = new Date()
+  const startDate = new Date(endDate)
+  startDate.setDate(endDate.getDate() - (days - 1))
+
+  return {
+    startDate: getDateISO(startDate),
+    endDate: getDateISO(endDate),
+  }
+}
+
+const getMonthRange = () => {
+  const endDate = new Date()
+  const startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1)
+
+  return {
+    startDate: getDateISO(startDate),
+    endDate: getDateISO(endDate),
+  }
+}
+
 const initialReportForm = {
-  startDate: '',
-  endDate: '',
+  ...getLastWeekRange(),
   type: 'all',
   category: 'all',
   member: 'all',
 }
+
+const initialPlannedPurchaseForm = {
+  title: '',
+  amount: '',
+  category: defaultCategories[0],
+  plannedDate: new Date().toISOString().slice(0, 10),
+  notes: '',
+}
+
+const initialBudgetForm = {
+  category: defaultCategories[0],
+  month: new Date().toISOString().slice(0, 7),
+  amount: '',
+}
+
+const changelogEntries = [
+  {
+    version: '1.0',
+    date: '2025-09-11',
+    title: 'Базовый финансовый учёт',
+    items: [
+      'Добавлена авторизация и семейный контекст для общего учёта.',
+      'Поддержаны доходы, расходы, переводы между участниками семьи.',
+      'Добавлены справочники категорий и членов семьи.',
+    ],
+  },
+  {
+    version: '1.1',
+    date: '2025-09-12',
+    title: 'Настройки, отчёты и визуальная навигация',
+    items: [
+      'Добавлено переключение светлой и тёмной темы.',
+      'Внедрён раздел отчётности по периоду, типу, категории и участнику.',
+      'Переход к левому меню для быстрого доступа к разделам приложения.',
+    ],
+  },
+  {
+    version: '1.2',
+    date: '2025-09-13',
+    title: 'Планы покупок и история доработок',
+    items: [
+      'Добавлены планы покупок с привязкой к категории и целевой дате.',
+      'Добавлена история улучшений и новых функций в формате журнала.',
+      'Улучшена структура данных для семейного планирования и контроля расходов.',
+    ],
+  },
+]
 
 const getPreferredTheme = () => {
   if (typeof window === 'undefined') {
@@ -91,11 +192,34 @@ function App() {
   const [activeTab, setActiveTab] = useState('overview')
   const [theme, setTheme] = useState(getPreferredTheme)
   const [reportForm, setReportForm] = useState(initialReportForm)
+  const [operationsFilter, setOperationsFilter] = useState({
+    ...getLastWeekRange(),
+    type: 'all',
+    category: 'all',
+    member: 'all',
+  })
+  const [plannedFilter, setPlannedFilter] = useState(getNextWeekRange())
   const [transactionEditingId, setTransactionEditingId] = useState('')
+  const [plannedPurchases, setPlannedPurchases] = useState([])
+  const [plannedPurchaseForm, setPlannedPurchaseForm] = useState(initialPlannedPurchaseForm)
+  const [plannedPurchaseEditingId, setPlannedPurchaseEditingId] = useState('')
+  const [budgets, setBudgets] = useState([])
+  const [budgetForm, setBudgetForm] = useState(initialBudgetForm)
+  const [budgetEditingId, setBudgetEditingId] = useState('')
   const [familyContext, setFamilyContext] = useState(null)
   const [joinCode, setJoinCode] = useState('')
   const [familyMessage, setFamilyMessage] = useState('')
   const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState('')
+  const [quickExpenseOpen, setQuickExpenseOpen] = useState(false)
+  const [quickExpenseStep, setQuickExpenseStep] = useState('member')
+  const [quickExpenseMemberId, setQuickExpenseMemberId] = useState('')
+  const [quickExpenseCategory, setQuickExpenseCategory] = useState(defaultCategories[0])
+  const [quickExpenseForm, setQuickExpenseForm] = useState({
+    description: '',
+    amount: '',
+    date: new Date().toISOString().slice(0, 10),
+  })
+  const amountInputRef = useRef(null)
 
   useEffect(() => {
     document.body.dataset.theme = theme
@@ -103,9 +227,24 @@ function App() {
   }, [theme])
 
   useEffect(() => {
+    if (quickExpenseOpen && quickExpenseStep === 'form') {
+      const timer = window.setTimeout(() => {
+        amountInputRef.current?.focus()
+        amountInputRef.current?.select()
+      }, 100)
+
+      return () => window.clearTimeout(timer)
+    }
+
+    return undefined
+  }, [quickExpenseOpen, quickExpenseStep])
+
+  useEffect(() => {
     let unsubscribeTransactions = null
     let unsubscribeFamilyMembers = null
     let unsubscribeCategories = null
+    let unsubscribePlannedPurchases = null
+    let unsubscribeBudgets = null
 
     const unsubscribeAuth = subscribeToAuth(async (currentUser) => {
       setUser(currentUser)
@@ -114,6 +253,8 @@ function App() {
         setTransactions([])
         setFamilyMembers([])
         setCategories([])
+        setPlannedPurchases([])
+        setBudgets([])
         setFamilyContext(null)
         setLoading(false)
         return
@@ -123,6 +264,8 @@ function App() {
       unsubscribeTransactions?.()
       unsubscribeFamilyMembers?.()
       unsubscribeCategories?.()
+      unsubscribePlannedPurchases?.()
+      unsubscribeBudgets?.()
 
       const context = await ensureFamilyContext(currentUser)
       setFamilyContext(context)
@@ -159,6 +302,26 @@ function App() {
           setLoading(false)
         },
       )
+
+      unsubscribePlannedPurchases = subscribeToPlannedPurchases(
+        context.familyId,
+        (items) => {
+          setPlannedPurchases(items)
+        },
+        (subscriptionError) => {
+          setError(`Не удалось обновить планы покупок: ${subscriptionError.message}`)
+        },
+      )
+
+      unsubscribeBudgets = subscribeToBudgets(
+        context.familyId,
+        (items) => {
+          setBudgets(items)
+        },
+        (subscriptionError) => {
+          setError(`Не удалось обновить лимиты бюджета: ${subscriptionError.message}`)
+        },
+      )
     })
 
     return () => {
@@ -166,6 +329,8 @@ function App() {
       unsubscribeTransactions?.()
       unsubscribeFamilyMembers?.()
       unsubscribeCategories?.()
+      unsubscribePlannedPurchases?.()
+      unsubscribeBudgets?.()
     }
     }, [])
 
@@ -208,21 +373,32 @@ function App() {
     return balances
   }, [familyMembers, transactions])
 
+  const matchesPeriod = (transactionDate, startDate, endDate) => {
+    if (startDate) {
+      const start = new Date(startDate)
+      start.setHours(0, 0, 0, 0)
+      if (new Date(transactionDate) < start) {
+        return false
+      }
+    }
+
+    if (endDate) {
+      const end = new Date(endDate)
+      end.setHours(23, 59, 59, 999)
+      if (new Date(transactionDate) > end) {
+        return false
+      }
+    }
+
+    return true
+  }
+
   const reportTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
       const { startDate, endDate, type, category, member } = reportForm
 
-      if (startDate && new Date(transaction.date) < new Date(startDate)) {
+      if (!matchesPeriod(transaction.date, startDate, endDate)) {
         return false
-      }
-
-      if (endDate) {
-        const end = new Date(endDate)
-        end.setHours(23, 59, 59, 999)
-
-        if (new Date(transaction.date) > end) {
-          return false
-        }
       }
 
       if (type !== 'all' && transaction.type !== type) {
@@ -241,6 +417,50 @@ function App() {
     })
   }, [transactions, reportForm])
 
+  const filteredOperations = useMemo(() => {
+    return transactions.filter((transaction) => {
+      const { startDate, endDate, type, category, member } = operationsFilter
+
+      if (!matchesPeriod(transaction.date, startDate, endDate)) {
+        return false
+      }
+
+      if (type !== 'all' && transaction.type !== type) {
+        return false
+      }
+
+      if (category !== 'all' && transaction.category !== category) {
+        return false
+      }
+
+      if (member !== 'all' && transaction.familyMemberId !== member) {
+        return false
+      }
+
+      return true
+    })
+  }, [transactions, operationsFilter])
+
+  const plannedFilterTransactions = useMemo(() => {
+    return plannedPurchases.filter((purchase) => {
+      const { startDate, endDate } = plannedFilter
+
+      if (startDate && new Date(purchase.plannedDate) < new Date(startDate)) {
+        return false
+      }
+
+      if (endDate) {
+        const end = new Date(endDate)
+        end.setHours(23, 59, 59, 999)
+        if (new Date(purchase.plannedDate) > end) {
+          return false
+        }
+      }
+
+      return true
+    })
+  }, [plannedPurchases, plannedFilter])
+
   const reportSummary = useMemo(() => {
     const income = reportTransactions
       .filter((item) => item.type === 'income')
@@ -257,6 +477,170 @@ function App() {
       count: reportTransactions.length,
     }
   }, [reportTransactions])
+
+  const monthlyBudgetRows = useMemo(() => {
+    const activeMonth = budgetForm.month || new Date().toISOString().slice(0, 7)
+
+    return categories.map((category) => {
+      const limit = budgets.find((item) => item.category === category.name && item.month === activeMonth)?.amount ?? 0
+      const spent = transactions
+        .filter(
+          (item) =>
+            item.type === 'expense' &&
+            item.category === category.name &&
+            item.date.startsWith(activeMonth),
+        )
+        .reduce((sum, item) => sum + item.amount, 0)
+
+      return {
+        category: category.name,
+        limit,
+        spent,
+        remaining: limit - spent,
+      }
+    })
+  }, [budgets, categories, transactions, budgetForm.month])
+
+  const plannedOverview = useMemo(() => {
+    const total = plannedPurchases.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    const soon = plannedPurchases.filter((item) => {
+      const diffDays = Math.ceil((new Date(item.plannedDate) - new Date()) / (1000 * 60 * 60 * 24))
+      return diffDays >= 0 && diffDays <= 30
+    }).length
+
+    return {
+      total,
+      count: plannedPurchases.length,
+      soon,
+    }
+  }, [plannedPurchases])
+
+  const categorySpending = useMemo(() => {
+    const month = reportForm.startDate ? reportForm.startDate.slice(0, 7) : new Date().toISOString().slice(0, 7)
+    const filtered = transactions.filter(
+      (item) =>
+        item.type === 'expense' &&
+        item.date.startsWith(month) &&
+        (!reportForm.member || reportForm.member === 'all' || item.familyMemberId === reportForm.member),
+    )
+
+    const total = filtered.reduce((sum, item) => sum + item.amount, 0)
+
+    return filtered
+      .reduce((groups, item) => {
+        const current = groups[item.category] || 0
+        groups[item.category] = current + item.amount
+        return groups
+      }, {})
+      .entries?.() ? [] : []
+  }, [transactions, reportForm.startDate, reportForm.member])
+
+  const categorySpendingRows = useMemo(() => {
+    const activeMonth = reportForm.startDate ? reportForm.startDate.slice(0, 7) : new Date().toISOString().slice(0, 7)
+    const filtered = transactions.filter(
+      (item) =>
+        item.type === 'expense' &&
+        item.date.startsWith(activeMonth) &&
+        (reportForm.member === 'all' || !reportForm.member || item.familyMemberId === reportForm.member),
+    )
+
+    const grouped = filtered.reduce((result, item) => {
+      result[item.category] = (result[item.category] || 0) + item.amount
+      return result
+    }, {})
+
+    const rows = Object.entries(grouped)
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((left, right) => right.amount - left.amount)
+
+    const total = rows.reduce((sum, row) => sum + row.amount, 0)
+
+    return rows.map((row) => ({
+      ...row,
+      percent: total ? (row.amount / total) * 100 : 0,
+    }))
+  }, [transactions, reportForm.startDate, reportForm.member])
+
+  const categoryDonutData = useMemo(() => {
+    const activeMonth = reportForm.startDate ? reportForm.startDate.slice(0, 7) : new Date().toISOString().slice(0, 7)
+
+    const filtered = transactions.filter(
+      (item) =>
+        item.type === 'expense' &&
+        item.date.startsWith(activeMonth) &&
+        (reportForm.member === 'all' || !reportForm.member || item.familyMemberId === reportForm.member),
+    )
+
+    const grouped = filtered.reduce((result, item) => {
+      result[item.category] = (result[item.category] || 0) + item.amount
+      return result
+    }, {})
+
+    const rows = Object.entries(grouped)
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((left, right) => right.amount - left.amount)
+
+    const total = rows.reduce((sum, row) => sum + row.amount, 0)
+
+    return rows.map((row, index) => ({
+      ...row,
+      percent: total ? (row.amount / total) * 100 : 0,
+      color: ['#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#f97316', '#60a5fa'][index % 7],
+    }))
+  }, [transactions, reportForm.startDate, reportForm.member])
+
+  const budgetVsFact = useMemo(() => {
+    const activeMonth = reportForm.startDate ? reportForm.startDate.slice(0, 7) : new Date().toISOString().slice(0, 7)
+
+    return categories.map((category) => {
+      const limit = budgets.find((item) => item.category === category.name && item.month === activeMonth)?.amount ?? 0
+      const spent = transactions
+        .filter(
+          (item) =>
+            item.type === 'expense' &&
+            item.category === category.name &&
+            item.date.startsWith(activeMonth),
+        )
+        .reduce((sum, item) => sum + item.amount, 0)
+
+      return {
+        category: category.name,
+        limit,
+        spent,
+        remaining: limit - spent,
+      }
+    })
+  }, [budgets, categories, transactions, reportForm.startDate])
+
+  const monthlyTrend = useMemo(() => {
+    const now = new Date()
+    const entries = Array.from({ length: 6 }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1)
+      const monthKey = date.toISOString().slice(0, 7)
+
+      const income = transactions
+        .filter((item) => item.type === 'income' && item.date.startsWith(monthKey))
+        .reduce((sum, item) => sum + item.amount, 0)
+
+      const expense = transactions
+        .filter((item) => item.type === 'expense' && item.date.startsWith(monthKey))
+        .reduce((sum, item) => sum + item.amount, 0)
+
+      return {
+        label: date.toLocaleString('ru-RU', { month: 'short' }),
+        income,
+        expense,
+      }
+    })
+
+    const maxValue = Math.max(...entries.map((entry) => Math.max(entry.income, entry.expense)), 1)
+
+    return entries.map((entry) => ({
+      ...entry,
+      incomeHeight: (entry.income / maxValue) * 100,
+      expenseHeight: (entry.expense / maxValue) * 100,
+    }))
+  }, [transactions])
 
   const handleChange = (event) => {
     const { name, value } = event.target
@@ -281,6 +665,136 @@ function App() {
   const handleReportChange = (event) => {
     const { name, value } = event.target
     setReportForm((current) => ({ ...current, [name]: value }))
+  }
+
+  const applyReportPreset = (preset) => {
+    if (preset === '7d') {
+      setReportForm((current) => ({ ...current, ...getLastDaysRange(7), category: 'all', member: 'all', type: 'all' }))
+      return
+    }
+
+    if (preset === '30d') {
+      setReportForm((current) => ({ ...current, ...getLastDaysRange(30), category: 'all', member: 'all', type: 'all' }))
+      return
+    }
+
+    if (preset === 'month') {
+      setReportForm((current) => ({ ...current, ...getMonthRange(), category: 'all', member: 'all', type: 'all' }))
+    }
+  }
+
+  const resetReportFilter = () => {
+    setReportForm({ ...getLastWeekRange(), type: 'all', category: 'all', member: 'all' })
+  }
+
+  const handleOperationsFilterChange = (event) => {
+    const { name, value } = event.target
+    setOperationsFilter((current) => ({ ...current, [name]: value }))
+  }
+
+  const handlePlannedFilterChange = (event) => {
+    const { name, value } = event.target
+    setPlannedFilter((current) => ({ ...current, [name]: value }))
+  }
+
+  const applyOperationsPreset = (preset) => {
+    if (preset === '7d') {
+      setOperationsFilter((current) => ({ ...current, ...getLastDaysRange(7), category: 'all', member: 'all', type: 'all' }))
+      return
+    }
+
+    if (preset === '30d') {
+      setOperationsFilter((current) => ({ ...current, ...getLastDaysRange(30), category: 'all', member: 'all', type: 'all' }))
+      return
+    }
+
+    if (preset === 'month') {
+      setOperationsFilter((current) => ({ ...current, ...getMonthRange(), category: 'all', member: 'all', type: 'all' }))
+    }
+  }
+
+  const resetOperationsFilter = () => {
+    setOperationsFilter({ ...getLastWeekRange(), type: 'all', category: 'all', member: 'all' })
+  }
+
+  const handlePlannedPurchaseChange = (event) => {
+    const { name, value } = event.target
+    setPlannedPurchaseForm((current) => ({ ...current, [name]: value }))
+  }
+
+  const handleBudgetChange = (event) => {
+    const { name, value } = event.target
+    setBudgetForm((current) => ({ ...current, [name]: value }))
+  }
+
+  const handleQuickExpenseInput = (event) => {
+    const { name, value } = event.target
+    setQuickExpenseForm((current) => ({ ...current, [name]: value }))
+  }
+
+  const openQuickExpense = () => {
+    const defaultMember = familyMembers[0]?.id || ''
+    setQuickExpenseMemberId(defaultMember)
+    setQuickExpenseCategory(categories[0]?.name || defaultCategories[0])
+    setQuickExpenseForm({
+      description: '',
+      amount: '',
+      date: new Date().toISOString().slice(0, 10),
+    })
+    setQuickExpenseStep('member')
+    setQuickExpenseOpen(true)
+  }
+
+  const handleQuickExpenseSubmit = async (event) => {
+    event.preventDefault()
+
+    if (!user || !familyContext?.familyId) {
+      setError('Сначала войдите в аккаунт.')
+      return
+    }
+
+    if (!quickExpenseMemberId) {
+      setError('Выберите члена семьи.')
+      return
+    }
+
+    if (!quickExpenseCategory) {
+      setError('Выберите категорию.')
+      return
+    }
+
+    if (!quickExpenseForm.description.trim() || !Number(quickExpenseForm.amount) || Number(quickExpenseForm.amount) <= 0) {
+      setError('Введите описание и сумму больше нуля.')
+      return
+    }
+
+    try {
+      await saveTransaction(
+        {
+          description: quickExpenseForm.description,
+          amount: quickExpenseForm.amount,
+          category: quickExpenseCategory,
+          familyMemberId: quickExpenseMemberId,
+          date: quickExpenseForm.date,
+          type: 'expense',
+        },
+        familyContext.familyId,
+        user.uid,
+      )
+
+      setQuickExpenseOpen(false)
+      setQuickExpenseStep('member')
+      setQuickExpenseMemberId('')
+      setQuickExpenseCategory(categories[0]?.name || defaultCategories[0])
+      setQuickExpenseForm({
+        description: '',
+        amount: '',
+        date: new Date().toISOString().slice(0, 10),
+      })
+      setError('')
+    } catch (submitError) {
+      setError(submitError.message)
+    }
   }
 
   const handleAuthSubmit = async (event) => {
@@ -546,6 +1060,83 @@ function App() {
     }
   }
 
+  const handleAddPlannedPurchase = async (event) => {
+    event.preventDefault()
+
+    if (!familyContext?.familyId) {
+      setError('Сначала войдите в аккаунт и создайте семью.')
+      return
+    }
+
+    try {
+      if (plannedPurchaseEditingId) {
+        await updatePlannedPurchase(plannedPurchaseEditingId, familyContext.familyId, plannedPurchaseForm)
+      } else {
+        await addPlannedPurchase(familyContext.familyId, plannedPurchaseForm)
+      }
+
+      setPlannedPurchaseForm(initialPlannedPurchaseForm)
+      setPlannedPurchaseEditingId('')
+    } catch (submitError) {
+      setError(submitError.message)
+    }
+  }
+
+  const handleEditPlannedPurchase = (purchase) => {
+    setPlannedPurchaseEditingId(purchase.id)
+    setPlannedPurchaseForm({
+      title: purchase.title,
+      amount: String(purchase.amount),
+      category: purchase.category,
+      plannedDate: purchase.plannedDate,
+      notes: purchase.notes || '',
+    })
+    setActiveTab('planned')
+  }
+
+  const handleDeletePlannedPurchase = async (purchaseId) => {
+    try {
+      await deletePlannedPurchase(purchaseId)
+    } catch (submitError) {
+      setError(submitError.message)
+    }
+  }
+
+  const handleBudgetSubmit = async (event) => {
+    event.preventDefault()
+
+    try {
+      if (budgetEditingId) {
+        await updateBudget(budgetEditingId, familyContext.familyId, budgetForm)
+      } else {
+        await addBudget(familyContext.familyId, budgetForm)
+      }
+
+      setBudgetForm(initialBudgetForm)
+      setBudgetEditingId('')
+    } catch (submitError) {
+      setError(submitError.message)
+    }
+  }
+
+  const handleEditBudget = (budget) => {
+    setBudgetEditingId(budget.id)
+    setBudgetForm({
+      category: budget.category,
+      month: budget.month,
+      amount: String(budget.amount),
+    })
+    setActiveTab('budget')
+  }
+
+  const handleDeleteBudget = async (budgetId) => {
+    try {
+      await deleteBudget(budgetId)
+    } catch (submitError) {
+      setError(submitError.message)
+    }
+  }
+
   const getTransactionMembers = (transaction) => {
     const from = familyMembers.find((member) => member.id === transaction.familyMemberId)
     const to = familyMembers.find((member) => member.id === transaction.transferToMemberId)
@@ -732,6 +1323,27 @@ function App() {
             >
               Отчёты
             </button>
+            <button
+              type="button"
+              className={activeTab === 'budget' ? 'menu-button active' : 'menu-button'}
+              onClick={() => setActiveTab('budget')}
+            >
+              Бюджет
+            </button>
+            <button
+              type="button"
+              className={activeTab === 'planned' ? 'menu-button active' : 'menu-button'}
+              onClick={() => setActiveTab('planned')}
+            >
+              Планы покупок
+            </button>
+            <button
+              type="button"
+              className={activeTab === 'history' ? 'menu-button active' : 'menu-button'}
+              onClick={() => setActiveTab('history')}
+            >
+              История доработок
+            </button>
           </div>
         )}
       </aside>
@@ -740,9 +1352,120 @@ function App() {
         {user && activeTab === 'overview' && (
           <>
             <section className="form-section">
-              <h2>{transactionEditingId ? 'Изменить расход' : 'Добавить расход'}</h2>
+              <div className="quick-expense-header">
+                <h2>{transactionEditingId ? 'Изменить расход' : 'Добавить расход'}</h2>
+                <button type="button" className="quick-expense-button" onClick={openQuickExpense}>
+                  Быстрый расход
+                </button>
+              </div>
 
               {error && <div className="notice error">{error}</div>}
+
+              {quickExpenseOpen && (
+                <div className="quick-expense-wizard">
+                  {quickExpenseStep === 'member' && (
+                    <>
+                      <div className="wizard-header">
+                        <h3>Кто тратил?</h3>
+                        <button type="button" className="ghost-button small" onClick={() => setQuickExpenseOpen(false)}>
+                          Закрыть
+                        </button>
+                      </div>
+
+                      <div className="member-choice-grid">
+                        {familyMembers.map((member) => (
+                          <button
+                            key={member.id}
+                            type="button"
+                            className={quickExpenseMemberId === member.id ? 'member-choice active' : 'member-choice'}
+                            onClick={() => {
+                              setQuickExpenseMemberId(member.id)
+                              setQuickExpenseStep('category')
+                            }}
+                          >
+                            {member.name}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {quickExpenseStep === 'category' && (
+                    <>
+                      <div className="wizard-header">
+                        <button type="button" className="ghost-button small" onClick={() => setQuickExpenseStep('member')}>
+                          Назад
+                        </button>
+                        <h3>Выберите категорию</h3>
+                      </div>
+
+                      <div className="member-choice-grid">
+                        {categories.map((category) => (
+                          <button
+                            key={category.id}
+                            type="button"
+                            className={quickExpenseCategory === category.name ? 'member-choice active' : 'member-choice'}
+                            onClick={() => {
+                              setQuickExpenseCategory(category.name)
+                              setQuickExpenseStep('form')
+                            }}
+                          >
+                            {category.name}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {quickExpenseStep === 'form' && (
+                    <form className="transaction-form quick-expense-form" onSubmit={handleQuickExpenseSubmit}>
+                      <div className="wizard-header">
+                        <button type="button" className="ghost-button small" onClick={() => setQuickExpenseStep('category')}>
+                          Назад
+                        </button>
+                        <h3>Новая трата</h3>
+                      </div>
+
+                      <div className="mini-summary">
+                        <span>{familyMembers.find((member) => member.id === quickExpenseMemberId)?.name || 'Член семьи'}</span>
+                        <span>•</span>
+                        <span>{quickExpenseCategory}</span>
+                      </div>
+
+                      <label>
+                        Дата
+                        <input name="date" type="date" value={quickExpenseForm.date} onChange={handleQuickExpenseInput} />
+                      </label>
+
+                      <label>
+                        Описание
+                        <input
+                          name="description"
+                          value={quickExpenseForm.description}
+                          onChange={handleQuickExpenseInput}
+                          placeholder="Например: Продукты"
+                        />
+                      </label>
+
+                      <label>
+                        Сумма
+                        <input
+                          ref={amountInputRef}
+                          name="amount"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={quickExpenseForm.amount}
+                          onChange={handleQuickExpenseInput}
+                          placeholder="0.00"
+                        />
+                      </label>
+
+                      <button type="submit" disabled={!firebaseReady}>Добавить расход</button>
+                    </form>
+                  )}
+                </div>
+              )}
 
               <form onSubmit={handleSubmit} className="transaction-form">
                 <label>
@@ -826,16 +1549,83 @@ function App() {
           <section className="reference-block">
             <div className="reference-header">
               <h2>Управление операциями</h2>
-              <p className="field-hint">Изменение и удаление расходов, доходов и передач.</p>
+              <p className="field-hint">Фильтры по периоду, типу, категории и участнику помогают найти нужную операцию среди больших списков.</p>
             </div>
 
             {error && <div className="notice error">{error}</div>}
 
-            {transactions.length === 0 ? (
-              <p className="empty-state">Пока нет операций.</p>
+            <form className="report-form filter-form">
+              <div className="filter-toolbar">
+                <button type="button" className="filter-button" onClick={() => applyOperationsPreset('7d')}>
+                  За 7 дней
+                </button>
+                <button type="button" className="filter-button" onClick={() => applyOperationsPreset('30d')}>
+                  За 30 дней
+                </button>
+                <button type="button" className="filter-button" onClick={() => applyOperationsPreset('month')}>
+                  За месяц
+                </button>
+                <button type="button" className="filter-button reset" onClick={resetOperationsFilter}>
+                  Сбросить фильтр
+                </button>
+              </div>
+
+              <div className="field-row">
+                <label>
+                  Дата с
+                  <input type="date" name="startDate" value={operationsFilter.startDate} onChange={handleOperationsFilterChange} />
+                </label>
+
+                <label>
+                  Дата по
+                  <input type="date" name="endDate" value={operationsFilter.endDate} onChange={handleOperationsFilterChange} />
+                </label>
+              </div>
+
+              <div className="field-row">
+                <label>
+                  Тип
+                  <select name="type" value={operationsFilter.type} onChange={handleOperationsFilterChange}>
+                    <option value="all">Все</option>
+                    <option value="income">Доход</option>
+                    <option value="expense">Расход</option>
+                    <option value="transfer">Передача</option>
+                  </select>
+                </label>
+
+                <label>
+                  Категория
+                  <select name="category" value={operationsFilter.category} onChange={handleOperationsFilterChange}>
+                    <option value="all">Все</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="field-row">
+                <label>
+                  Член семьи
+                  <select name="member" value={operationsFilter.member} onChange={handleOperationsFilterChange}>
+                    <option value="all">Все</option>
+                    {familyMembers.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </form>
+
+            {filteredOperations.length === 0 ? (
+              <p className="empty-state">Ни одной операции по выбранным фильтрам не найдено.</p>
             ) : (
               <ul className="transaction-list">
-                {transactions.map((transaction) => (
+                {filteredOperations.map((transaction) => (
                   <li key={transaction.id} className={transaction.type}>
                     <div>
                       <strong>{transaction.description}</strong>
@@ -1101,13 +1891,342 @@ function App() {
           </section>
         )}
 
+        {user && activeTab === 'planned' && (
+          <section className="reference-block">
+            <div className="reference-header">
+              <h2>Планы покупок</h2>
+              <p className="field-hint">По умолчанию показываем покупки на ближайшую неделю вперёд; можно изменить период вручную.</p>
+            </div>
+
+            {error && <div className="notice error">{error}</div>}
+
+            <form className="report-form filter-form">
+              <div className="filter-toolbar">
+                <button type="button" className="filter-button" onClick={() => setPlannedFilter(getNextWeekRange())}>
+                  На неделю вперёд
+                </button>
+                <button type="button" className="filter-button" onClick={() => setPlannedFilter({ startDate: getDateISO(new Date()), endDate: getDateISO(new Date(new Date().getTime() + 30 * 24 * 60 * 60 * 1000)) })}>
+                  На 30 дней
+                </button>
+                <button type="button" className="filter-button" onClick={() => setPlannedFilter({ startDate: getDateISO(new Date()), endDate: getDateISO(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)) })}>
+                  На месяц
+                </button>
+                <button type="button" className="filter-button reset" onClick={() => setPlannedFilter(getNextWeekRange())}>
+                  Сбросить фильтр
+                </button>
+              </div>
+
+              <div className="field-row">
+                <label>
+                  На дату с
+                  <input type="date" name="startDate" value={plannedFilter.startDate} onChange={handlePlannedFilterChange} />
+                </label>
+
+                <label>
+                  По дату
+                  <input type="date" name="endDate" value={plannedFilter.endDate} onChange={handlePlannedFilterChange} />
+                </label>
+              </div>
+            </form>
+
+            <div className="plan-overview">
+              <div className="plan-stat">
+                <span>Всего в периоде</span>
+                <strong>
+                  {plannedFilterTransactions
+                    .reduce((sum, item) => sum + Number(item.amount || 0), 0)
+                    .toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                </strong>
+              </div>
+              <div className="plan-stat">
+                <span>Покупок</span>
+                <strong>{plannedFilterTransactions.length}</strong>
+              </div>
+              <div className="plan-stat">
+                <span>Скоро</span>
+                <strong>
+                  {plannedFilterTransactions.filter((item) => {
+                    const diffDays = Math.ceil((new Date(item.plannedDate) - new Date()) / (1000 * 60 * 60 * 24))
+                    return diffDays >= 0 && diffDays <= 7
+                  }).length}
+                </strong>
+              </div>
+            </div>
+
+            <form onSubmit={handleAddPlannedPurchase} className="transaction-form">
+              <div className="field-row">
+                <label>
+                  Что планируете купить
+                  <input
+                    name="title"
+                    value={plannedPurchaseForm.title}
+                    onChange={handlePlannedPurchaseChange}
+                    placeholder="Например: Новый ноутбук"
+                  />
+                </label>
+
+                <label>
+                  Категория
+                  <select name="category" value={plannedPurchaseForm.category} onChange={handlePlannedPurchaseChange}>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="field-row">
+                <label>
+                  Сумма
+                  <input
+                    name="amount"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={plannedPurchaseForm.amount}
+                    onChange={handlePlannedPurchaseChange}
+                    placeholder="0.00"
+                  />
+                </label>
+
+                <label>
+                  Предполагаемая дата
+                  <input
+                    name="plannedDate"
+                    type="date"
+                    value={plannedPurchaseForm.plannedDate}
+                    onChange={handlePlannedPurchaseChange}
+                  />
+                </label>
+              </div>
+
+              <label>
+                Комментарий
+                <input
+                  name="notes"
+                  value={plannedPurchaseForm.notes}
+                  onChange={handlePlannedPurchaseChange}
+                  placeholder="Необязательно"
+                />
+              </label>
+
+              <div className="reference-form-actions">
+                <button type="submit" disabled={!firebaseReady}>
+                  {plannedPurchaseEditingId ? 'Сохранить план' : 'Добавить план'}
+                </button>
+                {plannedPurchaseEditingId && (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      setPlannedPurchaseEditingId('')
+                      setPlannedPurchaseForm(initialPlannedPurchaseForm)
+                    }}
+                  >
+                    Отмена
+                  </button>
+                )}
+              </div>
+            </form>
+
+            {plannedFilterTransactions.length === 0 ? (
+              <p className="empty-state">В выбранном периоде планов покупок нет.</p>
+            ) : (
+              <ul className="reference-list">
+                {plannedFilterTransactions.map((purchase) => {
+                  const diffDays = Math.ceil((new Date(purchase.plannedDate) - new Date()) / (1000 * 60 * 60 * 24))
+                  const isSoon = diffDays >= 0 && diffDays <= 30
+
+                  return (
+                    <li key={purchase.id} className={isSoon ? 'plan-item upcoming' : 'plan-item'}>
+                      <div className="plan-summary">
+                        <strong>{purchase.title}</strong>
+                        <small>
+                          {purchase.category} • {purchase.plannedDate}
+                        </small>
+                        {purchase.notes && <small>{purchase.notes}</small>}
+                        {isSoon && <span className="plan-badge">Скоро</span>}
+                      </div>
+                      <div className="reference-actions">
+                        <span>
+                          {Number(purchase.amount).toLocaleString('ru-RU', {
+                            style: 'currency',
+                            currency: 'RUB',
+                          })}
+                        </span>
+                        <button type="button" onClick={() => handleEditPlannedPurchase(purchase)}>
+                          Изменить
+                        </button>
+                        <button type="button" className="danger" onClick={() => handleDeletePlannedPurchase(purchase.id)}>
+                          Удалить
+                        </button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {user && activeTab === 'history' && (
+          <section className="reference-block">
+            <div className="reference-header">
+              <h2>История доработок</h2>
+              <p className="field-hint">Полный журнал улучшений и новых функций приложения.</p>
+            </div>
+
+            <div className="changelog-list">
+              {changelogEntries.map((entry) => (
+                <article key={entry.version} className="changelog-card">
+                  <div className="changelog-header">
+                    <span className="changelog-version">v{entry.version}</span>
+                    <time>{entry.date}</time>
+                  </div>
+                  <h3>{entry.title}</h3>
+                  <ul>
+                    {entry.items.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {user && activeTab === 'budget' && (
+          <section className="reference-block">
+            <div className="reference-header">
+              <h2>Бюджет по категориям</h2>
+              <p className="field-hint">Устанавливайте месячные лимиты и контролируйте, сколько уже фактически потрачено.</p>
+            </div>
+
+            {error && <div className="notice error">{error}</div>}
+
+            <form onSubmit={handleBudgetSubmit} className="transaction-form">
+              <div className="field-row">
+                <label>
+                  Категория
+                  <select name="category" value={budgetForm.category} onChange={handleBudgetChange}>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Месяц
+                  <input type="month" name="month" value={budgetForm.month} onChange={handleBudgetChange} />
+                </label>
+              </div>
+
+              <label>
+                Лимит
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  name="amount"
+                  value={budgetForm.amount}
+                  onChange={handleBudgetChange}
+                  placeholder="0.00"
+                />
+              </label>
+
+              <div className="reference-form-actions">
+                <button type="submit" disabled={!firebaseReady}>
+                  {budgetEditingId ? 'Сохранить лимит' : 'Добавить лимит'}
+                </button>
+                {budgetEditingId && (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      setBudgetEditingId('')
+                      setBudgetForm(initialBudgetForm)
+                    }}
+                  >
+                    Отмена
+                  </button>
+                )}
+              </div>
+            </form>
+
+            <div className="budget-grid">
+              {monthlyBudgetRows.map((row) => {
+                const overLimit = row.remaining < 0
+                return (
+                  <div key={row.category} className={overLimit ? 'budget-card danger' : 'budget-card'}>
+                    <div className="budget-topline">
+                      <strong>{row.category}</strong>
+                      <span>{row.spent.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</span>
+                    </div>
+                    <small>
+                      Лимит: {row.limit.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                    </small>
+                    <div className="budget-progress">
+                      <div
+                        className="budget-progress-bar"
+                        style={{ width: `${row.limit ? Math.min((row.spent / row.limit) * 100, 100) : 0}%` }}
+                      />
+                    </div>
+                    <div className="budget-footer">
+                      <span>{overLimit ? 'Превышение' : 'Остаток'}</span>
+                      <strong>
+                        {row.remaining.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                      </strong>
+                    </div>
+                    <div className="budget-actions">
+                      <button type="button" onClick={() => handleEditBudget(budgets.find((item) => item.category === row.category && item.month === budgetForm.month) ?? { ...initialBudgetForm, category: row.category, month: budgetForm.month, amount: row.limit })}>
+                        Изменить
+                      </button>
+                      {budgets.some((item) => item.category === row.category && item.month === budgetForm.month) && (
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => {
+                            const budget = budgets.find((item) => item.category === row.category && item.month === budgetForm.month)
+                            if (budget) handleDeleteBudget(budget.id)
+                          }}
+                        >
+                          Удалить
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
         {user && activeTab === 'reports' && (
           <section className="reference-block">
             <div className="reference-header">
               <h2>Отчётность</h2>
             </div>
 
-            <form className="report-form">
+            <form className="report-form filter-form">
+              <div className="filter-toolbar">
+                <button type="button" className="filter-button" onClick={() => applyReportPreset('7d')}>
+                  За 7 дней
+                </button>
+                <button type="button" className="filter-button" onClick={() => applyReportPreset('30d')}>
+                  За 30 дней
+                </button>
+                <button type="button" className="filter-button" onClick={() => applyReportPreset('month')}>
+                  За месяц
+                </button>
+                <button type="button" className="filter-button reset" onClick={resetReportFilter}>
+                  Сбросить фильтр
+                </button>
+              </div>
+
               <div className="field-row">
                 <label>
                   Дата с
@@ -1171,6 +2290,105 @@ function App() {
               <div>
                 <span>Итог</span>
                 <strong>{reportSummary.balance.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</strong>
+              </div>
+            </div>
+
+            <div className="charts-grid">
+              <div className="chart-panel">
+                <h3>Расходы по категориям</h3>
+                {categorySpendingRows.length === 0 ? (
+                  <p className="empty-state">Нет данных по расходам за выбранный период.</p>
+                ) : (
+                  <div className="category-bars">
+                    {categorySpendingRows.map((row, index) => (
+                      <div key={row.category} className="chart-row">
+                        <div className="chart-label-row">
+                          <span>{row.category}</span>
+                          <strong>{row.amount.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</strong>
+                        </div>
+                        <div className="chart-track">
+                          <div
+                            className="chart-fill"
+                            style={{
+                              width: `${row.percent}%`,
+                              background: ['#38bdf8', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#a78bfa'][index % 6],
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="chart-panel">
+                <h3>Доли расходов</h3>
+                {categoryDonutData.length === 0 ? (
+                  <p className="empty-state">Нет данных для donut-диаграммы.</p>
+                ) : (
+                  <div className="donut-wrap">
+                    <div className="donut-chart" style={{ background: `conic-gradient(${categoryDonutData.map((segment, index, arr) => {
+                      const previous = arr.slice(0, index).reduce((sum, item) => sum + item.percent, 0)
+                      return `${segment.color} ${previous}% ${previous + segment.percent}%`
+                    }).join(', ')})` }}>
+                      <div className="donut-center">
+                        <strong>{categoryDonutData[0]?.amount.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' }) || '0 ₽'}</strong>
+                        <span>Лидер</span>
+                      </div>
+                    </div>
+                    <ul className="donut-legend">
+                      {categoryDonutData.map((segment) => (
+                        <li key={segment.category}>
+                          <span className="legend-dot" style={{ background: segment.color }} />
+                          <span>{segment.category}</span>
+                          <strong>{segment.percent.toFixed(0)}%</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="chart-panel span-two">
+                <h3>Динамика расходов</h3>
+                <div className="trend-chart">
+                  {monthlyTrend.map((entry) => (
+                    <div key={`${entry.label}-${entry.income}-${entry.expense}`} className="trend-column">
+                      <div className="trend-bars">
+                        <div className="trend-bar income" style={{ height: `${entry.incomeHeight}%` }} />
+                        <div className="trend-bar expense" style={{ height: `${entry.expenseHeight}%` }} />
+                      </div>
+                      <span>{entry.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="chart-panel span-two">
+                <h3>Сравнение лимита и факта</h3>
+                <div className="budget-compare-list">
+                  {budgetVsFact.filter((item) => item.limit > 0 || item.spent > 0).map((item) => (
+                    <div key={item.category} className="budget-compare-item">
+                      <div className="budget-compare-header">
+                        <span>{item.category}</span>
+                        <strong>{item.remaining.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</strong>
+                      </div>
+                      <div className="compare-track">
+                        <div
+                          className="compare-track-fill"
+                          style={{
+                            width: `${item.limit ? Math.min((item.spent / item.limit) * 100, 100) : 0}%`,
+                            background: item.remaining < 0 ? 'linear-gradient(90deg, #f97316, #ef4444)' : 'linear-gradient(90deg, #34d399, #22c55e)',
+                          }}
+                        />
+                      </div>
+                      <div className="compare-meta">
+                        <small>Лимит: {item.limit.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</small>
+                        <small>Факт: {item.spent.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 

@@ -40,7 +40,7 @@ export const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
 export const db = app ? getFirestore(app) : null
 export const auth = app ? getAuth(app) : null
 
-export const defaultCategories = [
+export const defaultExpenseCategories = [
   'Продукты',
   'Транспорт',
   'Жильё',
@@ -49,11 +49,24 @@ export const defaultCategories = [
   'Развлечения',
   'Покупки',
   'Дети',
-  'Зарплата',
   'Другое',
 ]
 
+export const defaultIncomeCategories = ['Зарплата']
+
+export const defaultCategories = [...defaultExpenseCategories, ...defaultIncomeCategories]
+
 export const standardCategoryNames = [...defaultCategories]
+
+export function inferCategoryType(categoryName) {
+  const normalized = (categoryName || '').trim().toLowerCase()
+
+  if (!normalized) {
+    return 'expense'
+  }
+
+  return defaultIncomeCategories.some((name) => name.toLowerCase() === normalized) ? 'income' : 'expense'
+}
 
 function createInviteCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase()
@@ -202,20 +215,44 @@ export async function ensureDefaultCategories(familyId) {
   const categoryQuery = query(categoriesRef, where('familyId', '==', familyId))
   const snapshot = await getDocs(categoryQuery)
 
-  if (!snapshot.empty) {
+  const existingCategories = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    name: (doc.data().name || '').trim(),
+    type: doc.data().type || inferCategoryType(doc.data().name),
+  }))
+
+  const canonicalCategories = [
+    ...defaultExpenseCategories.map((name) => ({ name, type: 'expense' })),
+    ...defaultIncomeCategories.map((name) => ({ name, type: 'income' })),
+  ]
+
+  const hasCanonicalCategories =
+    existingCategories.length === canonicalCategories.length &&
+    existingCategories.every((category) =>
+      canonicalCategories.some(
+        (canonical) => canonical.name === category.name && canonical.type === category.type,
+      ),
+    )
+
+  if (hasCanonicalCategories) {
     return
   }
 
-  for (const name of defaultCategories) {
+  await Promise.all(
+    existingCategories.map((category) => deleteDoc(doc(db, 'categories', category.id))),
+  )
+
+  for (const category of canonicalCategories) {
     await addDoc(categoriesRef, {
       familyId,
-      name,
+      name: category.name,
+      type: category.type,
       createdAt: serverTimestamp(),
     })
   }
 }
 
-export async function addCategory(familyId, name) {
+export async function addCategory(familyId, name, type = 'expense') {
   if (!db || !familyId) {
     throw new Error('Для добавления категории нужно войти в аккаунт.')
   }
@@ -228,11 +265,12 @@ export async function addCategory(familyId, name) {
   await addDoc(collection(db, 'categories'), {
     familyId,
     name: trimmedName,
+    type: type === 'income' ? 'income' : 'expense',
     createdAt: serverTimestamp(),
   })
 }
 
-export async function updateCategory(id, familyId, name) {
+export async function updateCategory(id, familyId, name, type = 'expense') {
   if (!db || !familyId) {
     throw new Error('Для изменения категории нужно войти в аккаунт.')
   }
@@ -244,6 +282,7 @@ export async function updateCategory(id, familyId, name) {
 
   await updateDoc(doc(db, 'categories', id), {
     name: trimmedName,
+    type: type === 'income' ? 'income' : 'expense',
     updatedAt: serverTimestamp(),
   })
 }
@@ -270,6 +309,7 @@ export function subscribeToCategories(familyId, onUpdate, onError) {
       const categories = snapshot.docs.map((doc) => ({
         id: doc.id,
         name: doc.data().name || 'Без названия',
+        type: doc.data().type || inferCategoryType(doc.data().name),
       }))
 
       onUpdate(categories)

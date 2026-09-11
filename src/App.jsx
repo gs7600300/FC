@@ -159,6 +159,17 @@ const changelogEntries = [
       'Улучшена структура данных для семейного планирования и контроля расходов.',
     ],
   },
+  {
+    version: '1.3',
+    date: '2026-09-11',
+    title: 'Умный бюджет и разделение категорий',
+    items: [
+      'Разделены категории на доходы и расходы, чтобы в формах не отображались лишние пункты.',
+      'Добавлены умные карточки бюджета с анализом ближайших трат и рисков по лимитам.',
+      'Улучшен обзор семейных расходов: календарь оплат, рекомендации и общая сводка по бюджету.',
+      'Стабилизирована логика фильтрации и сброса параметров в отчётах и операциях.',
+    ],
+  },
 ]
 
 const getPreferredTheme = () => {
@@ -168,6 +179,23 @@ const getPreferredTheme = () => {
 
   const stored = localStorage.getItem('fc-theme')
   return stored === 'light' || stored === 'dark' ? stored : 'dark'
+}
+
+const getCategoryChoicesByType = (categoriesList, type) => {
+  if (!type || type === 'all') {
+    return categoriesList
+  }
+
+  const normalizedType = type === 'income' ? 'income' : 'expense'
+  return categoriesList.filter((category) => category.type === normalizedType)
+}
+
+const isCategoryAllowedForType = (categoryName, selectedType, categoriesList) => {
+  if (!categoryName || categoryName === 'all' || selectedType === 'all') {
+    return true
+  }
+
+  return getCategoryChoicesByType(categoriesList, selectedType).some((category) => category.name === categoryName)
 }
 
 function App() {
@@ -188,6 +216,7 @@ function App() {
   const [memberForm, setMemberForm] = useState('')
   const [memberEditingId, setMemberEditingId] = useState('')
   const [categoryForm, setCategoryForm] = useState('')
+  const [categoryType, setCategoryType] = useState('expense')
   const [categoryEditingId, setCategoryEditingId] = useState('')
   const [activeTab, setActiveTab] = useState('overview')
   const [theme, setTheme] = useState(getPreferredTheme)
@@ -515,6 +544,120 @@ function App() {
     }
   }, [plannedPurchases])
 
+  const budgetInsights = useMemo(() => {
+    const currentMonth = new Date().toISOString().slice(0, 7)
+    const monthlyExpenses = transactions.filter(
+      (item) => item.type === 'expense' && item.date.startsWith(currentMonth),
+    )
+
+    const rows = categories
+      .map((category) => {
+        const spent = monthlyExpenses
+          .filter((item) => item.category === category.name)
+          .reduce((sum, item) => sum + item.amount, 0)
+        const limit = budgets.find((item) => item.category === category.name && item.month === currentMonth)?.amount ?? 0
+
+        return {
+          category: category.name,
+          spent,
+          limit,
+          remaining: limit - spent,
+        }
+      })
+      .filter((item) => item.spent > 0 || item.limit > 0)
+      .sort((left, right) => {
+        if (left.remaining === right.remaining) {
+          return right.spent - left.spent
+        }
+
+        return left.remaining - right.remaining
+      })
+
+    const risks = rows.filter((item) => item.limit > 0 && item.remaining < 0)
+    const soonest = [...plannedPurchases]
+      .filter((item) => new Date(item.plannedDate) >= new Date())
+      .sort((left, right) => new Date(left.plannedDate) - new Date(right.plannedDate))
+      .slice(0, 3)
+
+    const totalSpent = monthlyExpenses.reduce((sum, item) => sum + item.amount, 0)
+    const totalBudget = budgets
+      .filter((item) => item.month === currentMonth)
+      .reduce((sum, item) => sum + item.amount, 0)
+
+    return {
+      rows,
+      risks,
+      soonest,
+      totalSpent,
+      totalBudget,
+      availableBudget: totalBudget - totalSpent,
+    }
+  }, [budgets, categories, plannedPurchases, transactions])
+
+  const paymentCalendar = useMemo(() => {
+    const now = new Date()
+    const targetDate = new Date(now)
+    targetDate.setDate(now.getDate() + 30)
+
+    return [...plannedPurchases]
+      .filter((item) => new Date(item.plannedDate) >= now && new Date(item.plannedDate) <= targetDate)
+      .sort((left, right) => new Date(left.plannedDate) - new Date(right.plannedDate))
+      .slice(0, 5)
+      .map((item) => ({
+        ...item,
+        diffDays: Math.ceil((new Date(item.plannedDate) - now) / (1000 * 60 * 60 * 24)),
+      }))
+  }, [plannedPurchases])
+
+  const spendingAdvice = useMemo(() => {
+    const currentMonth = new Date().toISOString().slice(0, 7)
+    const monthExpenses = transactions.filter(
+      (item) => item.type === 'expense' && item.date.startsWith(currentMonth),
+    )
+
+    const grouped = categories
+      .map((category) => {
+        const spent = monthExpenses
+          .filter((item) => item.category === category.name)
+          .reduce((sum, item) => sum + item.amount, 0)
+        const limit = budgets.find((item) => item.category === category.name && item.month === currentMonth)?.amount ?? 0
+
+        return {
+          category: category.name,
+          spent,
+          limit,
+          usage: limit ? (spent / limit) * 100 : 0,
+        }
+      })
+      .filter((category) => category.spent > 0)
+      .sort((left, right) => right.spent - left.spent)
+
+    const topCategory = grouped[0]
+    const nextCategory = grouped[1]
+    const totalSpent = monthExpenses.reduce((sum, item) => sum + item.amount, 0)
+    const average = grouped.length ? totalSpent / grouped.length : 0
+
+    const advice = []
+
+    if (topCategory && topCategory.usage > 90) {
+      advice.push(`Категория “${topCategory.category}” уже близка к лимиту — стоит замедлить покупки в ней на этой неделе.`)
+    }
+
+    if (nextCategory && nextCategory.spent > average) {
+      advice.push(`Сейчас “${nextCategory.category}” расходится сильнее среднего по месяцу, проверьте, что это действительно необходимые траты.`)
+    }
+
+    if (budgetInsights.availableBudget < 0) {
+      advice.push(`Общий лимит по месяцам уже превышен на ${Math.abs(budgetInsights.availableBudget).toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}. Подумайте, где сократить траты.`)
+    }
+
+    if (!advice.length) {
+      advice.push('Динамика пока стабильная. Хороший момент, чтобы удержать текущий уровень трат и сохранить запас на будущие покупки.')
+    }
+
+    return advice.slice(0, 3)
+  }, [budgetInsights.availableBudget, budgets, categories, transactions])
+
   const categorySpending = useMemo(() => {
     const month = reportForm.startDate ? reportForm.startDate.slice(0, 7) : new Date().toISOString().slice(0, 7)
     const filtered = transactions.filter(
@@ -647,6 +790,9 @@ function App() {
     setForm((current) => ({ ...current, [name]: value }))
   }
 
+  const expenseCategoryChoices = useMemo(() => getCategoryChoicesByType(categories, 'expense'), [categories])
+  const incomeCategoryChoices = useMemo(() => getCategoryChoicesByType(categories, 'income'), [categories])
+
   const handleAuthChange = (event) => {
     const { name, value } = event.target
     setAuthForm((current) => ({ ...current, [name]: value }))
@@ -664,7 +810,16 @@ function App() {
 
   const handleReportChange = (event) => {
     const { name, value } = event.target
-    setReportForm((current) => ({ ...current, [name]: value }))
+
+    setReportForm((current) => {
+      const next = { ...current, [name]: value }
+
+      if (name === 'type' && !isCategoryAllowedForType(current.category, value, categories)) {
+        next.category = 'all'
+      }
+
+      return next
+    })
   }
 
   const applyReportPreset = (preset) => {
@@ -689,7 +844,16 @@ function App() {
 
   const handleOperationsFilterChange = (event) => {
     const { name, value } = event.target
-    setOperationsFilter((current) => ({ ...current, [name]: value }))
+
+    setOperationsFilter((current) => {
+      const next = { ...current, [name]: value }
+
+      if (name === 'type' && !isCategoryAllowedForType(current.category, value, categories)) {
+        next.category = 'all'
+      }
+
+      return next
+    })
   }
 
   const handlePlannedFilterChange = (event) => {
@@ -734,8 +898,10 @@ function App() {
 
   const openQuickExpense = () => {
     const defaultMember = familyMembers[0]?.id || ''
+    const defaultExpenseCategory = expenseCategoryChoices[0]?.name || defaultCategories[0]
+
     setQuickExpenseMemberId(defaultMember)
-    setQuickExpenseCategory(categories[0]?.name || defaultCategories[0])
+    setQuickExpenseCategory(defaultExpenseCategory)
     setQuickExpenseForm({
       description: '',
       amount: '',
@@ -785,7 +951,7 @@ function App() {
       setQuickExpenseOpen(false)
       setQuickExpenseStep('member')
       setQuickExpenseMemberId('')
-      setQuickExpenseCategory(categories[0]?.name || defaultCategories[0])
+      setQuickExpenseCategory(expenseCategoryChoices[0]?.name || defaultCategories[0])
       setQuickExpenseForm({
         description: '',
         amount: '',
@@ -1036,11 +1202,12 @@ function App() {
 
     try {
       if (categoryEditingId) {
-        await updateCategory(categoryEditingId, familyContext.familyId, categoryForm)
+        await updateCategory(categoryEditingId, familyContext.familyId, categoryForm, categoryType)
       } else {
-        await addCategory(familyContext.familyId, categoryForm)
+        await addCategory(familyContext.familyId, categoryForm, categoryType)
       }
       setCategoryForm('')
+      setCategoryType('expense')
       setCategoryEditingId('')
     } catch (submitError) {
       setError(submitError.message)
@@ -1050,6 +1217,7 @@ function App() {
   const handleEditCategory = (category) => {
     setCategoryEditingId(category.id)
     setCategoryForm(category.name)
+    setCategoryType(category.type || 'expense')
   }
 
   const handleDeleteCategory = async (categoryId) => {
@@ -1160,7 +1328,13 @@ function App() {
     <div className="page-shell">
       <aside className="panel summary-panel">
         <p className="eyebrow">Финансовый учёт</p>
-        <h1>ZFAMILYCASH</h1>
+        <div className="brand-block">
+          <div className="brand-mark" aria-hidden="true">Z</div>
+          <div className="brand-copy">
+            <span className="brand-kicker">FAMILY CASH</span>
+            <span className="brand-name">ZFAMILYCASH</span>
+          </div>
+        </div>
 
         {user ? (
           <div className="user-box">
@@ -1400,7 +1574,7 @@ function App() {
                       </div>
 
                       <div className="member-choice-grid">
-                        {categories.map((category) => (
+                        {expenseCategoryChoices.map((category) => (
                           <button
                             key={category.id}
                             type="button"
@@ -1467,6 +1641,121 @@ function App() {
                 </div>
               )}
 
+              <div className="smart-budget-panel">
+                <div className="smart-budget-header">
+                  <div>
+                    <span className="eyebrow small">Умный бюджет</span>
+                    <h3>Семейная финансовая сводка</h3>
+                  </div>
+                </div>
+
+                <div className="smart-budget-grid">
+                  <div className="smart-budget-card accent">
+                    <span>Плановые траты</span>
+                    <strong>{plannedOverview.soon} шт.</strong>
+                    <small>в ближайшие 30 дней</small>
+                  </div>
+
+                  <div className="smart-budget-card">
+                    <span>Лимит месяца</span>
+                    <strong>
+                      {budgetInsights.totalBudget.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                    </strong>
+                    <small>всего назначено</small>
+                  </div>
+
+                  <div className="smart-budget-card warning">
+                    <span>Риск по лимитам</span>
+                    <strong>{budgetInsights.risks.length}</strong>
+                    <small>категорий уже в минусе</small>
+                  </div>
+                </div>
+
+                {budgetInsights.rows.length > 0 && (
+                  <div className="smart-budget-list">
+                    {budgetInsights.rows.slice(0, 3).map((item) => (
+                      <div key={item.category} className="smart-budget-item">
+                        <div className="smart-budget-item-head">
+                          <strong>{item.category}</strong>
+                          <span className={item.remaining < 0 ? 'warning-text' : 'ok-text'}>
+                            {item.remaining >= 0
+                              ? `Остаток ${item.remaining.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}`
+                              : `Превышение ${Math.abs(item.remaining).toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}`}
+                          </span>
+                        </div>
+                        <div className="smart-budget-bar-track">
+                          <div
+                            className="smart-budget-bar-fill"
+                            style={{
+                              width: `${item.limit ? Math.min((item.spent / item.limit) * 100, 100) : 0}%`,
+                              background: item.remaining < 0 ? 'linear-gradient(90deg, #fbbf24, #ef4444)' : 'linear-gradient(90deg, #34d399, #22c55e)',
+                            }}
+                          />
+                        </div>
+                        <small>
+                          Потрачено {item.spent.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })} / Лимит {item.limit.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {budgetInsights.soonest.length > 0 && (
+                  <div className="smart-budget-upcoming">
+                    <h4>Ближайшие покупки</h4>
+                    <ul>
+                      {budgetInsights.soonest.map((item) => (
+                        <li key={item.id}>
+                          <span>{item.title}</span>
+                          <strong>{new Date(item.plannedDate).toLocaleDateString('ru-RU')}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="family-insight-row">
+                <div className="insight-panel">
+                  <div className="insight-header">
+                    <h4>Календарь оплат</h4>
+                    <span>следующие 30 дней</span>
+                  </div>
+
+                  {paymentCalendar.length === 0 ? (
+                    <p className="empty-state compact">Плановых покупок на ближайшие 30 дней нет.</p>
+                  ) : (
+                    <ul className="payment-list">
+                      {paymentCalendar.map((item) => (
+                        <li key={item.id}>
+                          <div>
+                            <strong>{item.title}</strong>
+                            <small>{item.category}</small>
+                          </div>
+                          <div className="payment-meta">
+                            <span>{item.diffDays === 0 ? 'Сегодня' : `через ${item.diffDays} д.`}</span>
+                            <strong>{Number(item.amount).toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</strong>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="insight-panel">
+                  <div className="insight-header">
+                    <h4>Рекомендации</h4>
+                    <span>по бюджету</span>
+                  </div>
+
+                  <ul className="advice-list">
+                    {spendingAdvice.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
               <form onSubmit={handleSubmit} className="transaction-form">
                 <label>
                   Описание
@@ -1509,7 +1798,7 @@ function App() {
                   <label>
                     Категория
                     <select name="category" value={form.category} onChange={handleChange}>
-                      {categories.map((category) => (
+                      {expenseCategoryChoices.map((category) => (
                         <option key={category.id} value={category.name}>
                           {category.name}
                         </option>
@@ -1597,7 +1886,7 @@ function App() {
                   Категория
                   <select name="category" value={operationsFilter.category} onChange={handleOperationsFilterChange}>
                     <option value="all">Все</option>
-                    {categories.map((category) => (
+                    {getCategoryChoicesByType(categories, operationsFilter.type === 'income' ? 'income' : 'expense').map((category) => (
                       <option key={category.id} value={category.name}>
                         {category.name}
                       </option>
@@ -1793,6 +2082,10 @@ function App() {
                 onChange={(event) => setCategoryForm(event.target.value)}
                 placeholder="Название категории"
               />
+              <select value={categoryType} onChange={(event) => setCategoryType(event.target.value)}>
+                <option value="expense">Расход</option>
+                <option value="income">Доход</option>
+              </select>
               <button type="submit">{categoryEditingId ? 'Сохранить' : 'Добавить'}</button>
               {categoryEditingId && (
                 <button
@@ -1801,6 +2094,7 @@ function App() {
                   onClick={() => {
                     setCategoryEditingId('')
                     setCategoryForm('')
+                    setCategoryType('expense')
                   }}
                 >
                   Отмена
@@ -1811,7 +2105,9 @@ function App() {
             <ul className="reference-list">
               {categories.map((category) => (
                 <li key={category.id}>
-                  <span>{category.name}</span>
+                  <span>
+                    {category.name} <small>({category.type === 'income' ? 'Доход' : 'Расход'})</small>
+                  </span>
                   <div className="reference-actions">
                     <button type="button" onClick={() => handleEditCategory(category)}>
                       Изменить
@@ -1968,7 +2264,7 @@ function App() {
                 <label>
                   Категория
                   <select name="category" value={plannedPurchaseForm.category} onChange={handlePlannedPurchaseChange}>
-                    {categories.map((category) => (
+                    {expenseCategoryChoices.map((category) => (
                       <option key={category.id} value={category.name}>
                         {category.name}
                       </option>
@@ -2111,7 +2407,7 @@ function App() {
                 <label>
                   Категория
                   <select name="category" value={budgetForm.category} onChange={handleBudgetChange}>
-                    {categories.map((category) => (
+                    {expenseCategoryChoices.map((category) => (
                       <option key={category.id} value={category.name}>
                         {category.name}
                       </option>
@@ -2139,13 +2435,13 @@ function App() {
               </label>
 
               <div className="reference-form-actions">
-                <button type="submit" disabled={!firebaseReady}>
+                <button type="submit" className="budget-primary-button" disabled={!firebaseReady}>
                   {budgetEditingId ? 'Сохранить лимит' : 'Добавить лимит'}
                 </button>
                 {budgetEditingId && (
                   <button
                     type="button"
-                    className="ghost-button"
+                    className="budget-secondary-button"
                     onClick={() => {
                       setBudgetEditingId('')
                       setBudgetForm(initialBudgetForm)
@@ -2182,13 +2478,23 @@ function App() {
                       </strong>
                     </div>
                     <div className="budget-actions">
-                      <button type="button" onClick={() => handleEditBudget(budgets.find((item) => item.category === row.category && item.month === budgetForm.month) ?? { ...initialBudgetForm, category: row.category, month: budgetForm.month, amount: row.limit })}>
+                      <button
+                        type="button"
+                        className="budget-action-button primary"
+                        onClick={() =>
+                          handleEditBudget(
+                            budgets.find(
+                              (item) => item.category === row.category && item.month === budgetForm.month,
+                            ) ?? { ...initialBudgetForm, category: row.category, month: budgetForm.month, amount: row.limit },
+                          )
+                        }
+                      >
                         Изменить
                       </button>
                       {budgets.some((item) => item.category === row.category && item.month === budgetForm.month) && (
                         <button
                           type="button"
-                          className="danger"
+                          className="budget-action-button danger"
                           onClick={() => {
                             const budget = budgets.find((item) => item.category === row.category && item.month === budgetForm.month)
                             if (budget) handleDeleteBudget(budget.id)
@@ -2254,7 +2560,7 @@ function App() {
                   Категория
                   <select name="category" value={reportForm.category} onChange={handleReportChange}>
                     <option value="all">Все</option>
-                    {categories.map((category) => (
+                    {getCategoryChoicesByType(categories, reportForm.type === 'income' ? 'income' : 'expense').map((category) => (
                       <option key={category.id} value={category.name}>
                         {category.name}
                       </option>

@@ -58,8 +58,18 @@ export const defaultCategories = [...defaultExpenseCategories, ...defaultIncomeC
 
 export const standardCategoryNames = [...defaultCategories]
 
+export function normalizeCategoryName(categoryName) {
+  const trimmed = String(categoryName ?? '').replace(/\s+/g, ' ').trim()
+
+  if (!trimmed || /[?��]/.test(trimmed) || trimmed.includes('???') || trimmed.includes('????')) {
+    return 'Другое'
+  }
+
+  return trimmed
+}
+
 export function inferCategoryType(categoryName) {
-  const normalized = (categoryName || '').trim().toLowerCase()
+  const normalized = normalizeCategoryName(categoryName).toLowerCase()
 
   if (!normalized) {
     return 'expense'
@@ -215,11 +225,15 @@ export async function ensureDefaultCategories(familyId) {
   const categoryQuery = query(categoriesRef, where('familyId', '==', familyId))
   const snapshot = await getDocs(categoryQuery)
 
-  const existingCategories = snapshot.docs.map((doc) => ({
-    id: doc.id,
-    name: (doc.data().name || '').trim(),
-    type: doc.data().type || inferCategoryType(doc.data().name),
-  }))
+  const existingCategories = snapshot.docs.map((doc) => {
+    const rawName = normalizeCategoryName(doc.data().name)
+
+    return {
+      id: doc.id,
+      name: rawName,
+      type: doc.data().type || inferCategoryType(rawName),
+    }
+  })
 
   const canonicalCategories = [
     ...defaultExpenseCategories.map((name) => ({ name, type: 'expense' })),
@@ -257,8 +271,8 @@ export async function addCategory(familyId, name, type = 'expense') {
     throw new Error('Для добавления категории нужно войти в аккаунт.')
   }
 
-  const trimmedName = name.trim()
-  if (!trimmedName) {
+  const trimmedName = normalizeCategoryName(name)
+  if (!trimmedName || trimmedName === 'Другое' && !name?.trim()) {
     throw new Error('Название категории не может быть пустым.')
   }
 
@@ -275,8 +289,8 @@ export async function updateCategory(id, familyId, name, type = 'expense') {
     throw new Error('Для изменения категории нужно войти в аккаунт.')
   }
 
-  const trimmedName = name.trim()
-  if (!trimmedName) {
+  const trimmedName = normalizeCategoryName(name)
+  if (!trimmedName || trimmedName === 'Другое' && !name?.trim()) {
     throw new Error('Название категории не может быть пустым.')
   }
 
@@ -306,11 +320,15 @@ export function subscribeToCategories(familyId, onUpdate, onError) {
   return onSnapshot(
     categoriesRef,
     (snapshot) => {
-      const categories = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        name: doc.data().name || 'Без названия',
-        type: doc.data().type || inferCategoryType(doc.data().name),
-      }))
+      const categories = snapshot.docs.map((doc) => {
+        const cleanName = normalizeCategoryName(doc.data().name)
+
+        return {
+          id: doc.id,
+          name: cleanName,
+          type: doc.data().type || inferCategoryType(cleanName),
+        }
+      })
 
       onUpdate(categories)
     },

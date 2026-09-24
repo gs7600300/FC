@@ -181,6 +181,53 @@ const getPreferredTheme = () => {
   return stored === 'light' || stored === 'dark' ? stored : 'dark'
 }
 
+const getPreferredStyle = () => {
+  if (typeof window === 'undefined') {
+    return 'banking'
+  }
+
+  const stored = localStorage.getItem('fc-style')
+  return stored === 'banking' || stored === 'minimal' || stored === 'glass' ? stored : 'banking'
+}
+
+const convertToIsoDate = (value) => {
+  if (!value) {
+    return ''
+  }
+
+  const trimmed = String(value).trim()
+
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(trimmed)) {
+    const [day, month, year] = trimmed.split('.')
+    return `${year}-${month}-${day}`
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed
+  }
+
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+
+  return parsed.toISOString().slice(0, 10)
+}
+
+const formatDateDisplay = (value) => {
+  if (!value) {
+    return ''
+  }
+
+  const isoValue = convertToIsoDate(value)
+  if (!isoValue) {
+    return ''
+  }
+
+  const [year, month, day] = isoValue.split('-')
+  return `${day}.${month}.${year}`
+}
+
 const getCategoryChoicesByType = (categoriesList, type) => {
   if (!type || type === 'all') {
     return categoriesList
@@ -220,6 +267,7 @@ function App() {
   const [categoryEditingId, setCategoryEditingId] = useState('')
   const [activeTab, setActiveTab] = useState('overview')
   const [theme, setTheme] = useState(getPreferredTheme)
+  const [style, setStyle] = useState(getPreferredStyle)
   const [reportForm, setReportForm] = useState(initialReportForm)
   const [operationsFilter, setOperationsFilter] = useState({
     ...getLastWeekRange(),
@@ -254,6 +302,11 @@ function App() {
     document.body.dataset.theme = theme
     localStorage.setItem('fc-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    document.body.dataset.style = style
+    localStorage.setItem('fc-style', style)
+  }, [style])
 
   useEffect(() => {
     if (quickExpenseOpen && quickExpenseStep === 'form') {
@@ -1608,7 +1661,19 @@ function App() {
 
                       <label>
                         Дата
-                        <input name="date" type="date" value={quickExpenseForm.date} onChange={handleQuickExpenseInput} />
+                        <input
+                          name="date"
+                          type="text"
+                          inputMode="numeric"
+                          value={formatDateDisplay(quickExpenseForm.date)}
+                          onChange={(event) =>
+                            setQuickExpenseForm((current) => ({
+                              ...current,
+                              date: convertToIsoDate(event.target.value),
+                            }))
+                          }
+                          placeholder="10.10.2026"
+                        />
                       </label>
 
                       <label>
@@ -1707,7 +1772,7 @@ function App() {
                       {budgetInsights.soonest.map((item) => (
                         <li key={item.id}>
                           <span>{item.title}</span>
-                          <strong>{new Date(item.plannedDate).toLocaleDateString('ru-RU')}</strong>
+                          <strong>{formatDateDisplay(item.plannedDate)}</strong>
                         </li>
                       ))}
                     </ul>
@@ -1810,7 +1875,19 @@ function App() {
                 <div className="field-row">
                   <label>
                     Дата
-                    <input name="date" type="date" value={form.date} onChange={handleChange} />
+                    <input
+                      name="date"
+                      type="text"
+                      inputMode="numeric"
+                      value={formatDateDisplay(form.date)}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          date: convertToIsoDate(event.target.value),
+                        }))
+                      }
+                      placeholder="10.10.2026"
+                    />
                   </label>
                 </div>
 
@@ -1862,12 +1939,36 @@ function App() {
               <div className="field-row">
                 <label>
                   Дата с
-                  <input type="date" name="startDate" value={operationsFilter.startDate} onChange={handleOperationsFilterChange} />
+                  <input
+                    type="text"
+                    name="startDate"
+                    inputMode="numeric"
+                    value={formatDateDisplay(operationsFilter.startDate)}
+                    onChange={(event) =>
+                      setOperationsFilter((current) => ({
+                        ...current,
+                        startDate: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
+                  />
                 </label>
 
                 <label>
                   Дата по
-                  <input type="date" name="endDate" value={operationsFilter.endDate} onChange={handleOperationsFilterChange} />
+                  <input
+                    type="text"
+                    name="endDate"
+                    inputMode="numeric"
+                    value={formatDateDisplay(operationsFilter.endDate)}
+                    onChange={(event) =>
+                      setOperationsFilter((current) => ({
+                        ...current,
+                        endDate: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
+                  />
                 </label>
               </div>
 
@@ -1971,7 +2072,19 @@ function App() {
                 </div>
                 <label>
                   Дата
-                  <input name="date" type="date" value={incomeForm.date} onChange={handleIncomeChange} />
+                  <input
+                    name="date"
+                    type="text"
+                    inputMode="numeric"
+                    value={formatDateDisplay(incomeForm.date)}
+                    onChange={(event) =>
+                      setIncomeForm((current) => ({
+                        ...current,
+                        date: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
+                  />
                 </label>
                 <button type="submit" disabled={saving || !firebaseReady}>                {saving ? 'Сохранение...' : transactionEditingId ? 'Сохранить доход' : 'Добавить доход'}</button>
               </form>
@@ -2016,7 +2129,19 @@ function App() {
                   </label>
                   <label>
                     Дата
-                    <input name="date" type="date" value={transferForm.date} onChange={handleTransferChange} />
+                    <input
+                      name="date"
+                      type="text"
+                      inputMode="numeric"
+                      value={formatDateDisplay(transferForm.date)}
+                      onChange={(event) =>
+                        setTransferForm((current) => ({
+                          ...current,
+                          date: convertToIsoDate(event.target.value),
+                        }))
+                      }
+                      placeholder="10.10.2026"
+                    />
                   </label>
                 </div>
                 <button type="submit" disabled={saving || !firebaseReady}>{saving ? 'Сохранение...' : transactionEditingId ? 'Сохранить передачу' : 'Добавить передачу'}</button>
@@ -2149,6 +2274,33 @@ function App() {
             </div>
 
             <div className="settings-group">
+              <h3>Стиль интерфейса</h3>
+              <div className="theme-switcher">
+                <button
+                  type="button"
+                  className={style === 'banking' ? 'theme-button active' : 'theme-button'}
+                  onClick={() => setStyle('banking')}
+                >
+                  Banking
+                </button>
+                <button
+                  type="button"
+                  className={style === 'minimal' ? 'theme-button active' : 'theme-button'}
+                  onClick={() => setStyle('minimal')}
+                >
+                  Minimal
+                </button>
+                <button
+                  type="button"
+                  className={style === 'glass' ? 'theme-button active' : 'theme-button'}
+                  onClick={() => setStyle('glass')}
+                >
+                  Glass
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-group">
               <h3>{familyContext?.familyName || 'Семья'}</h3>
               <p className="field-hint">
                 Код приглашения: <strong>{familyContext?.inviteCode || '—'}</strong>
@@ -2215,12 +2367,36 @@ function App() {
               <div className="field-row">
                 <label>
                   На дату с
-                  <input type="date" name="startDate" value={plannedFilter.startDate} onChange={handlePlannedFilterChange} />
+                  <input
+                    type="text"
+                    name="startDate"
+                    inputMode="numeric"
+                    value={formatDateDisplay(plannedFilter.startDate)}
+                    onChange={(event) =>
+                      setPlannedFilter((current) => ({
+                        ...current,
+                        startDate: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
+                  />
                 </label>
 
                 <label>
                   По дату
-                  <input type="date" name="endDate" value={plannedFilter.endDate} onChange={handlePlannedFilterChange} />
+                  <input
+                    type="text"
+                    name="endDate"
+                    inputMode="numeric"
+                    value={formatDateDisplay(plannedFilter.endDate)}
+                    onChange={(event) =>
+                      setPlannedFilter((current) => ({
+                        ...current,
+                        endDate: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
+                  />
                 </label>
               </div>
             </form>
@@ -2291,9 +2467,16 @@ function App() {
                   Предполагаемая дата
                   <input
                     name="plannedDate"
-                    type="date"
-                    value={plannedPurchaseForm.plannedDate}
-                    onChange={handlePlannedPurchaseChange}
+                    type="text"
+                    inputMode="numeric"
+                    value={formatDateDisplay(plannedPurchaseForm.plannedDate)}
+                    onChange={(event) =>
+                      setPlannedPurchaseForm((current) => ({
+                        ...current,
+                        plannedDate: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
                   />
                 </label>
               </div>
@@ -2536,12 +2719,36 @@ function App() {
               <div className="field-row">
                 <label>
                   Дата с
-                  <input type="date" name="startDate" value={reportForm.startDate} onChange={handleReportChange} />
+                  <input
+                    type="text"
+                    name="startDate"
+                    inputMode="numeric"
+                    value={formatDateDisplay(reportForm.startDate)}
+                    onChange={(event) =>
+                      setReportForm((current) => ({
+                        ...current,
+                        startDate: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
+                  />
                 </label>
 
                 <label>
                   Дата по
-                  <input type="date" name="endDate" value={reportForm.endDate} onChange={handleReportChange} />
+                  <input
+                    type="text"
+                    name="endDate"
+                    inputMode="numeric"
+                    value={formatDateDisplay(reportForm.endDate)}
+                    onChange={(event) =>
+                      setReportForm((current) => ({
+                        ...current,
+                        endDate: convertToIsoDate(event.target.value),
+                      }))
+                    }
+                    placeholder="10.10.2026"
+                  />
                 </label>
               </div>
 
